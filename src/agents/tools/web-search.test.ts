@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { __testing } from "./web-search.js";
 
-const { inferPerplexityBaseUrlFromApiKey, resolvePerplexityBaseUrl, normalizeFreshness } =
+const {
+  inferPerplexityBaseUrlFromApiKey,
+  resolvePerplexityBaseUrl,
+  normalizeFreshness,
+  resolveExaApiKeys,
+} =
   __testing;
 
 describe("web_search perplexity baseUrl defaults", () => {
@@ -67,5 +72,36 @@ describe("web_search freshness normalization", () => {
     expect(normalizeFreshness("2024-13-01to2024-01-31")).toBeUndefined();
     expect(normalizeFreshness("2024-02-30to2024-03-01")).toBeUndefined();
     expect(normalizeFreshness("2024-03-10to2024-03-01")).toBeUndefined();
+  });
+});
+
+describe("web_search exa api key resolution", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("prefers config apiKeys over EXA_API_KEYS", () => {
+    vi.stubEnv("EXA_API_KEYS", "env-1,env-2");
+    vi.stubEnv("EXA_API_KEY", "env-single");
+    expect(resolveExaApiKeys({ apiKeys: ["cfg-1", "cfg-2"], apiKey: "cfg-single" })).toEqual([
+      "cfg-1",
+      "cfg-2",
+    ]);
+  });
+
+  it("prefers EXA_API_KEYS over config apiKey", () => {
+    vi.stubEnv("EXA_API_KEYS", "env-1, env-2");
+    vi.stubEnv("EXA_API_KEY", "env-single");
+    expect(resolveExaApiKeys({ apiKey: "cfg-single" })).toEqual(["env-1", "env-2"]);
+  });
+
+  it("prefers config apiKey over EXA_API_KEY", () => {
+    vi.stubEnv("EXA_API_KEY", "env-single");
+    expect(resolveExaApiKeys({ apiKey: "cfg-single" })).toEqual(["cfg-single"]);
+  });
+
+  it("falls back to EXA_API_KEY when config is missing", () => {
+    vi.stubEnv("EXA_API_KEY", "env-single");
+    expect(resolveExaApiKeys({})).toEqual(["env-single"]);
   });
 });
