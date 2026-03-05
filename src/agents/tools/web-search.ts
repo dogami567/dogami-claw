@@ -17,11 +17,15 @@ import {
   writeCache,
 } from "./web-shared.js";
 
-const SEARCH_PROVIDERS = ["brave", "perplexity"] as const;
+const SEARCH_PROVIDERS = ["brave", "perplexity", "exa"] as const;
 const DEFAULT_SEARCH_COUNT = 5;
 const MAX_SEARCH_COUNT = 10;
 
 const BRAVE_SEARCH_ENDPOINT = "https://api.search.brave.com/res/v1/web/search";
+const DEFAULT_EXA_BASE_URL = "https://api.exa.ai";
+const DEFAULT_EXA_SEARCH_TYPE = "auto";
+const DEFAULT_EXA_CONTENT_MODE = "highlights";
+const DEFAULT_EXA_MAX_CHARACTERS = 4_000;
 const DEFAULT_PERPLEXITY_BASE_URL = "https://openrouter.ai/api/v1";
 const PERPLEXITY_DIRECT_BASE_URL = "https://api.perplexity.ai";
 const DEFAULT_PERPLEXITY_MODEL = "perplexity/sonar-pro";
@@ -103,6 +107,34 @@ type PerplexitySearchResponse = {
 
 type PerplexityBaseUrlHint = "direct" | "openrouter";
 
+type ExaConfig = {
+  apiKey?: string;
+  apiKeys?: string[];
+  baseUrl?: string;
+  searchType?: "fast" | "auto";
+  contentMode?: "highlights" | "text";
+  maxCharacters?: number;
+};
+
+type ExaKeyAttempt = {
+  keyIndex: number;
+  status?: number;
+  error?: string;
+};
+
+type ExaSearchResult = {
+  title?: string;
+  url?: string;
+  text?: string;
+  highlights?: string[];
+  publishedDate?: string;
+  published_date?: string;
+};
+
+type ExaSearchResponse = {
+  results?: ExaSearchResult[];
+};
+
 function resolveSearchConfig(cfg?: ClawdbotConfig): WebSearchConfig {
   const search = cfg?.tools?.web?.search;
   if (!search || typeof search !== "object") return undefined;
@@ -131,6 +163,14 @@ function missingSearchKeyPayload(provider: (typeof SEARCH_PROVIDERS)[number]) {
       docs: "https://docs.clawd.bot/tools/web",
     };
   }
+  if (provider === "exa") {
+    return {
+      error: "missing_exa_api_key",
+      message:
+        "web_search (exa) needs an API key. Set EXA_API_KEY or EXA_API_KEYS in the Gateway environment, or configure tools.web.search.exa.apiKey/tools.web.search.exa.apiKeys.",
+      docs: "https://docs.clawd.bot/tools/web",
+    };
+  }
   return {
     error: "missing_brave_api_key",
     message: `web_search needs a Brave Search API key. Run \`${formatCliCommand("clawdbot configure --section web")}\` to store it, or set BRAVE_API_KEY in the Gateway environment.`,
@@ -145,6 +185,7 @@ function resolveSearchProvider(search?: WebSearchConfig): (typeof SEARCH_PROVIDE
       : "";
   if (raw === "perplexity") return "perplexity";
   if (raw === "brave") return "brave";
+  if (raw === "exa") return "exa";
   return "brave";
 }
 
@@ -153,6 +194,13 @@ function resolvePerplexityConfig(search?: WebSearchConfig): PerplexityConfig {
   const perplexity = "perplexity" in search ? search.perplexity : undefined;
   if (!perplexity || typeof perplexity !== "object") return {};
   return perplexity as PerplexityConfig;
+}
+
+function resolveExaConfig(search?: WebSearchConfig): ExaConfig {
+  if (!search || typeof search !== "object") return {};
+  const exa = "exa" in search ? search.exa : undefined;
+  if (!exa || typeof exa !== "object") return {};
+  return exa as ExaConfig;
 }
 
 function resolvePerplexityApiKey(perplexity?: PerplexityConfig): {
@@ -179,6 +227,62 @@ function resolvePerplexityApiKey(perplexity?: PerplexityConfig): {
 
 function normalizeApiKey(key: unknown): string {
   return typeof key === "string" ? key.trim() : "";
+}
+
+function normalizeApiKeys(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(normalizeApiKey).filter(Boolean);
+}
+
+function normalizeApiKeysCsv(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  return trimmed
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function resolveExaApiKeys(exa?: ExaConfig): string[] {
+  const fromConfigKeys = normalizeApiKeys(exa?.apiKeys);
+  if (fromConfigKeys.length > 0) return fromConfigKeys;
+
+  const fromEnvKeys = normalizeApiKeysCsv(process.env.EXA_API_KEYS);
+  if (fromEnvKeys.length > 0) return fromEnvKeys;
+
+  const fromConfigKey = normalizeApiKey(exa?.apiKey);
+  if (fromConfigKey) return [fromConfigKey];
+
+  const fromEnvKey = normalizeApiKey(process.env.EXA_API_KEY);
+  if (fromEnvKey) return [fromEnvKey];
+
+  return [];
+}
+
+function resolveExaBaseUrl(exa?: ExaConfig): string {
+  const fromConfig = typeof exa?.baseUrl === "string" ? exa.baseUrl.trim() : "";
+  return fromConfig || DEFAULT_EXA_BASE_URL;
+}
+
+function resolveExaSearchType(exa?: ExaConfig): "fast" | "auto" {
+  const raw = typeof exa?.searchType === "string" ? exa.searchType.trim().toLowerCase() : "";
+  if (raw === "fast") return "fast";
+  return DEFAULT_EXA_SEARCH_TYPE;
+}
+
+function resolveExaContentMode(exa?: ExaConfig): "highlights" | "text" {
+  const raw = typeof exa?.contentMode === "string" ? exa.contentMode.trim().toLowerCase() : "";
+  if (raw === "text") return "text";
+  return DEFAULT_EXA_CONTENT_MODE;
+}
+
+function resolveExaMaxCharacters(exa?: ExaConfig): number {
+  const raw =
+    typeof exa?.maxCharacters === "number" && Number.isFinite(exa.maxCharacters)
+      ? exa.maxCharacters
+      : DEFAULT_EXA_MAX_CHARACTERS;
+  return Math.max(1, Math.floor(raw));
 }
 
 function inferPerplexityBaseUrlFromApiKey(apiKey?: string): PerplexityBaseUrlHint | undefined {
@@ -306,10 +410,133 @@ async function runPerplexitySearch(params: {
   return { content, citations };
 }
 
+function shouldRotateExaKey(status: number): boolean {
+  return status === 401 || status === 403 || status === 429 || status >= 500;
+}
+
+function createExaContents(params: {
+  contentMode: "highlights" | "text";
+  maxCharacters: number;
+}): Record<string, unknown> {
+  if (params.contentMode === "text") {
+    return {
+      text: { max_characters: params.maxCharacters },
+    };
+  }
+  return {
+    highlights: { max_characters: params.maxCharacters },
+  };
+}
+
+function resolveExaDescription(
+  entry: ExaSearchResult,
+  params: { contentMode: "highlights" | "text" },
+): string {
+  if (params.contentMode === "text") {
+    return typeof entry.text === "string" ? entry.text : "";
+  }
+  if (Array.isArray(entry.highlights) && typeof entry.highlights[0] === "string") {
+    return entry.highlights[0];
+  }
+  return typeof entry.text === "string" ? entry.text : "";
+}
+
+async function runExaSearch(params: {
+  query: string;
+  count: number;
+  apiKeys: string[];
+  baseUrl: string;
+  searchType: "fast" | "auto";
+  contentMode: "highlights" | "text";
+  maxCharacters: number;
+  timeoutSeconds: number;
+}): Promise<
+  | { ok: true; results: Array<Record<string, unknown>>; keyIndex: number }
+  | { ok: false; error: string; message: string; attempts: ExaKeyAttempt[] }
+> {
+  const endpoint = `${params.baseUrl.replace(/\/$/, "")}/search`;
+  const body = {
+    query: params.query,
+    num_results: params.count,
+    type: params.searchType,
+    contents: createExaContents({
+      contentMode: params.contentMode,
+      maxCharacters: params.maxCharacters,
+    }),
+  };
+
+  const attempts: ExaKeyAttempt[] = [];
+
+  for (let keyIndex = 0; keyIndex < params.apiKeys.length; keyIndex += 1) {
+    const apiKey = params.apiKeys[keyIndex];
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "x-api-key": apiKey,
+        },
+        body: JSON.stringify(body),
+        signal: withTimeout(undefined, params.timeoutSeconds * 1000),
+      });
+
+      if (!res.ok) {
+        const detail = await readResponseText(res);
+        const attempt: ExaKeyAttempt = {
+          keyIndex,
+          status: res.status,
+          error: detail || res.statusText,
+        };
+        if (shouldRotateExaKey(res.status)) {
+          attempts.push(attempt);
+          continue;
+        }
+
+        return {
+          ok: false,
+          error: "exa_api_error",
+          message: `Exa API error (${res.status}): ${detail || res.statusText}`,
+          attempts: [attempt],
+        };
+      }
+
+      const data = (await res.json()) as ExaSearchResponse;
+      const results = Array.isArray(data.results) ? data.results : [];
+      const mapped = results.map((entry) => {
+        const url = typeof entry.url === "string" ? entry.url : "";
+        return {
+          title: typeof entry.title === "string" ? entry.title : "",
+          url,
+          description: resolveExaDescription(entry, { contentMode: params.contentMode }),
+          published: entry.publishedDate ?? entry.published_date ?? undefined,
+          siteName: resolveSiteName(url),
+        };
+      });
+
+      return { ok: true, results: mapped, keyIndex };
+    } catch (err) {
+      attempts.push({
+        keyIndex,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      continue;
+    }
+  }
+
+  return {
+    ok: false,
+    error: "exa_key_pool_exhausted",
+    message: "Exa search failed for all configured API keys.",
+    attempts,
+  };
+}
+
 async function runWebSearch(params: {
   query: string;
   count: number;
-  apiKey: string;
+  apiKey?: string;
+  apiKeys?: string[];
   timeoutSeconds: number;
   cacheTtlMs: number;
   provider: (typeof SEARCH_PROVIDERS)[number];
@@ -319,18 +546,79 @@ async function runWebSearch(params: {
   freshness?: string;
   perplexityBaseUrl?: string;
   perplexityModel?: string;
+  exaBaseUrl?: string;
+  exaSearchType?: "fast" | "auto";
+  exaContentMode?: "highlights" | "text";
+  exaMaxCharacters?: number;
 }): Promise<Record<string, unknown>> {
   const cacheKey = normalizeCacheKey(
     params.provider === "brave"
       ? `${params.provider}:${params.query}:${params.count}:${params.country || "default"}:${params.search_lang || "default"}:${params.ui_lang || "default"}:${params.freshness || "default"}`
-      : `${params.provider}:${params.query}:${params.count}:${params.country || "default"}:${params.search_lang || "default"}:${params.ui_lang || "default"}`,
+      : params.provider === "exa"
+        ? `${params.provider}:${params.query}:${params.count}:${params.exaSearchType || DEFAULT_EXA_SEARCH_TYPE}:${params.exaContentMode || DEFAULT_EXA_CONTENT_MODE}:${params.exaMaxCharacters || DEFAULT_EXA_MAX_CHARACTERS}:${params.exaBaseUrl || DEFAULT_EXA_BASE_URL}`
+        : `${params.provider}:${params.query}:${params.count}:${params.country || "default"}:${params.search_lang || "default"}:${params.ui_lang || "default"}`,
   );
   const cached = readCache(SEARCH_CACHE, cacheKey);
   if (cached) return { ...cached.value, cached: true };
 
   const start = Date.now();
 
+  if (params.provider === "exa") {
+    const apiKeys = Array.isArray(params.apiKeys) ? params.apiKeys.filter(Boolean) : [];
+    if (apiKeys.length === 0) {
+      return {
+        error: "missing_exa_api_key",
+        message:
+          "Exa API key is missing (set tools.web.search.exa.apiKey/apiKeys or EXA_API_KEY(S)).",
+        docs: "https://docs.clawd.bot/tools/web",
+      };
+    }
+
+    const contentMode = params.exaContentMode ?? DEFAULT_EXA_CONTENT_MODE;
+    const searchType = params.exaSearchType ?? DEFAULT_EXA_SEARCH_TYPE;
+    const maxCharacters = params.exaMaxCharacters ?? DEFAULT_EXA_MAX_CHARACTERS;
+    const baseUrl = params.exaBaseUrl ?? DEFAULT_EXA_BASE_URL;
+
+    const exa = await runExaSearch({
+      query: params.query,
+      count: params.count,
+      apiKeys,
+      baseUrl,
+      searchType,
+      contentMode,
+      maxCharacters,
+      timeoutSeconds: params.timeoutSeconds,
+    });
+
+    if (!exa.ok) {
+      return {
+        query: params.query,
+        provider: params.provider,
+        tookMs: Date.now() - start,
+        error: exa.error,
+        message: exa.message,
+        attempts: exa.attempts,
+      };
+    }
+
+    const payload = {
+      query: params.query,
+      provider: params.provider,
+      count: exa.results.length,
+      tookMs: Date.now() - start,
+      searchType,
+      contentMode,
+      maxCharacters,
+      results: exa.results,
+    };
+    writeCache(SEARCH_CACHE, cacheKey, payload, params.cacheTtlMs);
+    return payload;
+  }
+
   if (params.provider === "perplexity") {
+    if (!params.apiKey) {
+      throw new Error("Perplexity API key is missing.");
+    }
     const { content, citations } = await runPerplexitySearch({
       query: params.query,
       apiKey: params.apiKey,
@@ -353,6 +641,9 @@ async function runWebSearch(params: {
 
   if (params.provider !== "brave") {
     throw new Error("Unsupported web search provider.");
+  }
+  if (!params.apiKey) {
+    throw new Error("Brave Search API key is missing.");
   }
 
   const url = new URL(BRAVE_SEARCH_ENDPOINT);
@@ -415,11 +706,14 @@ export function createWebSearchTool(options?: {
 
   const provider = resolveSearchProvider(search);
   const perplexityConfig = resolvePerplexityConfig(search);
+  const exaConfig = resolveExaConfig(search);
 
   const description =
     provider === "perplexity"
       ? "Search the web using Perplexity Sonar (direct or via OpenRouter). Returns AI-synthesized answers with citations from real-time web search."
-      : "Search the web using Brave Search API. Supports region-specific and localized search via country and language parameters. Returns titles, URLs, and snippets for fast research.";
+      : provider === "exa"
+        ? "Search the web using Exa Search API. Returns titles, URLs, and snippets from fetched page content (highlights or text)."
+        : "Search the web using Brave Search API. Supports region-specific and localized search via country and language parameters. Returns titles, URLs, and snippets for fast research.";
 
   return {
     label: "Web Search",
@@ -428,11 +722,15 @@ export function createWebSearchTool(options?: {
     parameters: WebSearchSchema,
     execute: async (_toolCallId, args) => {
       const perplexityAuth =
-        provider === "perplexity" ? resolvePerplexityApiKey(perplexityConfig) : undefined;
-      const apiKey =
-        provider === "perplexity" ? perplexityAuth?.apiKey : resolveSearchApiKey(search);
+        provider === "perplexity" ? resolvePerplexityApiKey(perplexityConfig) : null;
+      const apiKey = provider === "brave" ? resolveSearchApiKey(search) : perplexityAuth?.apiKey;
+      const exaApiKeys = provider === "exa" ? resolveExaApiKeys(exaConfig) : null;
 
-      if (!apiKey) {
+      if (provider === "exa") {
+        if (!exaApiKeys || exaApiKeys.length === 0) {
+          return jsonResult(missingSearchKeyPayload(provider));
+        }
+      } else if (!apiKey) {
         return jsonResult(missingSearchKeyPayload(provider));
       }
       const params = args as Record<string, unknown>;
@@ -443,15 +741,16 @@ export function createWebSearchTool(options?: {
       const search_lang = readStringParam(params, "search_lang");
       const ui_lang = readStringParam(params, "ui_lang");
       const rawFreshness = readStringParam(params, "freshness");
-      if (rawFreshness && provider !== "brave") {
+      if (rawFreshness && provider === "perplexity") {
         return jsonResult({
           error: "unsupported_freshness",
           message: "freshness is only supported by the Brave web_search provider.",
           docs: "https://docs.clawd.bot/tools/web",
         });
       }
-      const freshness = rawFreshness ? normalizeFreshness(rawFreshness) : undefined;
-      if (rawFreshness && !freshness) {
+      const freshness =
+        provider === "brave" && rawFreshness ? normalizeFreshness(rawFreshness) : undefined;
+      if (provider === "brave" && rawFreshness && !freshness) {
         return jsonResult({
           error: "invalid_freshness",
           message:
@@ -463,6 +762,7 @@ export function createWebSearchTool(options?: {
         query,
         count: resolveSearchCount(count, DEFAULT_SEARCH_COUNT),
         apiKey,
+        apiKeys: provider === "exa" ? (exaApiKeys ?? undefined) : undefined,
         timeoutSeconds: resolveTimeoutSeconds(search?.timeoutSeconds, DEFAULT_TIMEOUT_SECONDS),
         cacheTtlMs: resolveCacheTtlMs(search?.cacheTtlMinutes, DEFAULT_CACHE_TTL_MINUTES),
         provider,
@@ -476,6 +776,10 @@ export function createWebSearchTool(options?: {
           perplexityAuth?.apiKey,
         ),
         perplexityModel: resolvePerplexityModel(perplexityConfig),
+        exaBaseUrl: provider === "exa" ? resolveExaBaseUrl(exaConfig) : undefined,
+        exaSearchType: provider === "exa" ? resolveExaSearchType(exaConfig) : undefined,
+        exaContentMode: provider === "exa" ? resolveExaContentMode(exaConfig) : undefined,
+        exaMaxCharacters: provider === "exa" ? resolveExaMaxCharacters(exaConfig) : undefined,
       });
       return jsonResult(result);
     },
@@ -486,4 +790,5 @@ export const __testing = {
   inferPerplexityBaseUrlFromApiKey,
   resolvePerplexityBaseUrl,
   normalizeFreshness,
+  resolveExaApiKeys,
 } as const;

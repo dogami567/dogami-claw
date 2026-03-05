@@ -21,6 +21,7 @@ These are **not** browser automation. For JS-heavy sites or logins, use the
 - `web_search` calls your configured provider and returns results.
   - **Brave** (default): returns structured results (title, URL, snippet).
   - **Perplexity**: returns AI-synthesized answers with citations from real-time web search.
+  - **Exa**: returns structured results (title, URL, snippet from highlights/text).
 - Results are cached by query for 15 minutes (configurable).
 - `web_fetch` does a plain HTTP GET and extracts readable content
   (HTML → markdown/text). It does **not** execute JavaScript.
@@ -32,6 +33,7 @@ These are **not** browser automation. For JS-heavy sites or logins, use the
 |----------|------|------|---------|
 | **Brave** (default) | Fast, structured results, free tier | Traditional search results | `BRAVE_API_KEY` |
 | **Perplexity** | AI-synthesized answers, citations, real-time | Requires Perplexity or OpenRouter access | `OPENROUTER_API_KEY` or `PERPLEXITY_API_KEY` |
+| **Exa** | High-quality web search + snippets (highlights/text) | Requires Exa access | `EXA_API_KEY` or `EXA_API_KEYS` |
 
 See [Brave Search setup](/brave-search) and [Perplexity Sonar](/perplexity) for provider-specific details.
 
@@ -42,7 +44,7 @@ Set the provider in config:
   tools: {
     web: {
       search: {
-        provider: "brave"  // or "perplexity"
+        provider: "brave"  // or "perplexity" or "exa"
       }
     }
   }
@@ -138,6 +140,43 @@ If no base URL is set, Clawdbot chooses a default based on the API key source:
 | `perplexity/sonar-pro` (default) | Multi-step reasoning with web search | Complex questions |
 | `perplexity/sonar-reasoning-pro` | Chain-of-thought analysis | Deep research |
 
+## Using Exa (direct)
+
+Exa provides web search with optional extracted page snippets. Clawdbot supports Exa via the
+`web_search` tool when `tools.web.search.provider="exa"`.
+
+### Setting up Exa search
+
+```json5
+{
+  tools: {
+    web: {
+      search: {
+        enabled: true,
+        provider: "exa",
+        exa: {
+          // Prefer apiKeys for key rotation / pooling (optional)
+          apiKeys: ["exa-...", "exa-..."],
+          // Or a single key (optional if EXA_API_KEY(S) is set)
+          apiKey: "exa-...",
+          // Base URL override (defaults to https://api.exa.ai)
+          baseUrl: "https://api.exa.ai",
+          // Search type (defaults to "auto")
+          searchType: "auto", // or "fast"
+          // Content mode (defaults to "highlights")
+          contentMode: "highlights", // or "text"
+          // Max characters per result content (defaults to 4000)
+          maxCharacters: 4000
+        }
+      }
+    }
+  }
+}
+```
+
+**Environment alternative:** set `EXA_API_KEY` (single key) or `EXA_API_KEYS` (comma-separated key pool)
+in the Gateway environment. For a gateway install, put it in `~/.clawdbot/.env` (or your service environment).
+
 ## web_search
 
 Search the web using your configured provider.
@@ -148,6 +187,7 @@ Search the web using your configured provider.
 - API key for your chosen provider:
   - **Brave**: `BRAVE_API_KEY` or `tools.web.search.apiKey`
   - **Perplexity**: `OPENROUTER_API_KEY`, `PERPLEXITY_API_KEY`, or `tools.web.search.perplexity.apiKey`
+  - **Exa**: `EXA_API_KEY`, `EXA_API_KEYS`, `tools.web.search.exa.apiKey`, or `tools.web.search.exa.apiKeys`
 
 ### Config
 

@@ -1,0 +1,32 @@
+{
+  "name": "@clawdbot/onebot",
+  "version": "2026.1.25",
+  "type": "module",
+  "description": "Clawdbot OneBot channel plugin (QQ via NapCat, etc.)",
+  "clawdbot": {
+    "extensions": ["./index.ts"],
+    "channel": {
+      "id": "onebot",
+      "label": "OneBot",
+      "selectionLabel": "QQ (OneBot)",
+      "docsPath": "/channels/onebot",
+      "docsLabel": "onebot",
+      "blurb": "QQ via OneBot bridges (works with NapCat); install the plugin to enable.",
+      "order": 110,
+      "quickstartAllowFrom": true
+    },
+    "install": {
+      "npmSpec": "@clawdbot/onebot",
+      "localPath": "extensions/onebot",
+      "defaultChoice": "npm"
+    }
+  },
+  "dependencies": {
+    "ws": "^8.19.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "clawdbot": "workspace:*"
+  }
+}
+

@@ -22,4 +22,26 @@ describe("web search provider config", () => {
 
     expect(res.ok).toBe(true);
   });
+
+  it("accepts exa provider and config", () => {
+    const res = validateConfigObject({
+      tools: {
+        web: {
+          search: {
+            enabled: true,
+            provider: "exa",
+            exa: {
+              apiKeys: ["test-key-1", "test-key-2"],
+              baseUrl: "https://api.exa.ai",
+              searchType: "auto",
+              contentMode: "highlights",
+              maxCharacters: 4000,
+            },
+          },
+        },
+      },
+    });
+
+    expect(res.ok).toBe(true);
+  });
 });

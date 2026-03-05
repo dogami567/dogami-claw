@@ -1,7 +1,9 @@
 node_modules
 **/node_modules/
 .env
+.env.work
 docker-compose.extra.yml
+docker-compose.extra.yml.bak
 dist
 *.bun-build
 pnpm-lock.yaml
@@ -63,11 +65,15 @@ apps/ios/*.mobileprovision
 # Local untracked files
 .local/
 .runtime/
+.runtime-work/
+.agent-loop/
+.codex/
 .claude/
 .vscode/
 IDENTITY.md
 USER.md
 .tgz
+exa-web-search.patch
 
 # local tooling
 .serena/

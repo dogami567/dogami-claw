@@ -82,6 +82,8 @@ function formatFiles(repoRoot, oxfmt, files) {
   const result = spawnSync(oxfmt.command, ["--write", ...oxfmt.args, ...files], {
     cwd: repoRoot,
     stdio: "inherit",
+    // On Windows, pnpm's local bin shim is a `.cmd` file which requires a shell.
+    shell: process.platform === "win32",
   });
   return result.status === 0;
 }
