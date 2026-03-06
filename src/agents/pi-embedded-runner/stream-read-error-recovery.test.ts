@@ -1,6 +1,6 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Context, Model } from "@mariozechner/pi-ai";
-import { AssistantMessageEventStream } from "@mariozechner/pi-ai";
+import { AssistantMessageEventStream } from "@mariozechner/pi-ai/dist/utils/event-stream.js";
 import { describe, expect, it } from "vitest";
 
 import { wrapStreamFnForStreamReadErrorRecovery } from "./stream-read-error-recovery.js";

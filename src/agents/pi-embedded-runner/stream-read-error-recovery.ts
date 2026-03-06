@@ -1,6 +1,6 @@
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
-import { AssistantMessageEventStream } from "@mariozechner/pi-ai";
+import { AssistantMessageEventStream } from "@mariozechner/pi-ai/dist/utils/event-stream.js";
 
 import { log } from "./logger.js";
 
@@ -34,9 +34,17 @@ function shouldRecoverFromStreamReadError(msg: AssistantMessage): boolean {
   return hasTerminalUsage(msg) || hasAnyTextSignature(msg);
 }
 
-function recoverAssistantMessage(msg: AssistantMessage): AssistantMessage {
+function recoverAssistantStopReason(
+  msg: AssistantMessage,
+): Extract<AssistantMessage["stopReason"], "stop" | "toolUse"> {
   const hasToolCalls = msg.content.some((block) => block.type === "toolCall");
-  const recoveredStopReason = hasToolCalls ? "toolUse" : "stop";
+  return hasToolCalls ? "toolUse" : "stop";
+}
+
+function recoverAssistantMessage(
+  msg: AssistantMessage,
+): AssistantMessage & { stopReason: Extract<AssistantMessage["stopReason"], "stop" | "toolUse"> } {
+  const recoveredStopReason = recoverAssistantStopReason(msg);
   const { errorMessage: _ignored, ...rest } = msg;
   return {
     ...rest,
@@ -91,7 +99,11 @@ export function wrapStreamFnForStreamReadErrorRecovery(
                 log.warn(
                   `Recovered stream_read_error for ${model.provider}/${model.id} (api=${model.api}).`,
                 );
-                out.push({ type: "done", reason: recovered.stopReason, message: recovered });
+                out.push({
+                  type: "done",
+                  reason: recoverAssistantStopReason(recovered),
+                  message: recovered,
+                });
                 out.end();
                 return;
               }
@@ -125,7 +137,11 @@ export function wrapStreamFnForStreamReadErrorRecovery(
             log.warn(
               `Recovered stream_read_error for ${model.provider}/${model.id} (api=${model.api}) without terminal event.`,
             );
-            out.push({ type: "done", reason: recovered.stopReason, message: recovered });
+            out.push({
+              type: "done",
+              reason: recoverAssistantStopReason(recovered),
+              message: recovered,
+            });
             out.end();
             return;
           }
@@ -155,6 +171,10 @@ export function wrapStreamFnForStreamReadErrorRecovery(
         }
       }
     })().catch((err) => {
+      const stopReason: Extract<AssistantMessage["stopReason"], "error" | "aborted"> = streamOptions
+        ?.signal?.aborted
+        ? "aborted"
+        : "error";
       const message: AssistantMessage = {
         role: "assistant",
         content: [],
@@ -175,11 +195,11 @@ export function wrapStreamFnForStreamReadErrorRecovery(
             total: 0,
           },
         },
-        stopReason: streamOptions?.signal?.aborted ? "aborted" : "error",
+        stopReason,
         errorMessage: err instanceof Error ? err.message : String(err),
         timestamp: Date.now(),
       };
-      out.push({ type: "error", reason: message.stopReason, error: message });
+      out.push({ type: "error", reason: stopReason, error: message });
       out.end();
     });
 
