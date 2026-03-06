@@ -132,6 +132,9 @@ export type ExecToolDefaults = {
   scopeKey?: string;
   sessionKey?: string;
   messageProvider?: string;
+  messageTo?: string;
+  messageThreadId?: string | number;
+  agentAccountId?: string;
   notifyOnExit?: boolean;
   cwd?: string;
 };
@@ -323,6 +326,31 @@ function maybeNotifyOnExit(session: ProcessSession, status: "completed" | "faile
 
 function createApprovalSlug(id: string) {
   return id.slice(0, APPROVAL_SLUG_LENGTH);
+}
+
+function normalizeEnvValue(value?: string | number | null) {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(Math.trunc(value)) : undefined;
+  }
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function buildExecContextEnv(defaults?: ExecToolDefaults) {
+  const sessionKey = normalizeEnvValue(defaults?.sessionKey);
+  const messageProvider = normalizeEnvValue(defaults?.messageProvider);
+  const messageTo = normalizeEnvValue(defaults?.messageTo);
+  const messageThreadId = normalizeEnvValue(defaults?.messageThreadId);
+  const agentAccountId = normalizeEnvValue(defaults?.agentAccountId);
+
+  const env: Record<string, string> = {};
+  if (sessionKey) env.CLAWDBOT_SESSION_KEY = sessionKey;
+  if (messageProvider) env.CLAWDBOT_MESSAGE_PROVIDER = messageProvider;
+  if (messageTo) env.CLAWDBOT_MESSAGE_TO = messageTo;
+  if (messageThreadId) env.CLAWDBOT_MESSAGE_THREAD_ID = messageThreadId;
+  if (agentAccountId) env.CLAWDBOT_MESSAGE_ACCOUNT_ID = agentAccountId;
+  return env;
 }
 
 function resolveApprovalRunningNoticeMs(value?: number) {
@@ -866,12 +894,19 @@ export function createExecTool(
         workdir = resolveWorkdir(rawWorkdir, warnings);
       }
 
+      const execContextEnv = buildExecContextEnv(defaults);
       const baseEnv = coerceEnv(process.env);
-      const mergedEnv = params.env ? { ...baseEnv, ...params.env } : baseEnv;
+      const mergedEnv =
+        params.env || Object.keys(execContextEnv).length > 0
+          ? { ...baseEnv, ...(params.env ?? {}), ...execContextEnv }
+          : baseEnv;
       const env = sandbox
         ? buildSandboxEnv({
             defaultPath: DEFAULT_PATH,
-            paramsEnv: params.env,
+            paramsEnv:
+              params.env || Object.keys(execContextEnv).length > 0
+                ? { ...(params.env ?? {}), ...execContextEnv }
+                : undefined,
             sandboxEnv: sandbox.env,
             containerWorkdir: containerWorkdir ?? sandbox.containerWorkdir,
           })
@@ -926,7 +961,10 @@ export function createExecTool(
           );
         }
         const argv = buildNodeShellCommand(params.command, nodeInfo?.platform);
-        const nodeEnv = params.env ? { ...params.env } : undefined;
+        const nodeEnv =
+          params.env || Object.keys(execContextEnv).length > 0
+            ? { ...(params.env ?? {}), ...execContextEnv }
+            : undefined;
         if (nodeEnv) {
           applyPathPrepend(nodeEnv, defaultPathPrepend, { requireExisting: true });
         }
