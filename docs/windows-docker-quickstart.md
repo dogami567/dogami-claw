@@ -31,7 +31,7 @@ Default: `http://127.0.0.1:18789/`
 ## 5) Change default model
 
 ```powershell
-scripts\win\clawdbot-set-model.bat openai/gpt-5.2
+scripts\win\clawdbot-set-model.bat openai/gpt-5.4
 scripts\win\clawdbot-set-model.bat openai/gpt-4o-mini
 ```
 
@@ -45,4 +45,5 @@ scripts\win\clawdbot-list-openai-models.bat
 ## Notes
 
 - After changing `.env`, you must **recreate** the container for new env vars to take effect. `scripts\win\clawdbot-restart-gateway.bat` already does this.
+- If you define custom providers under `models.providers`, keep the model metadata in sync with the upstream catalog. When an upstream raises a model context limit, update `contextWindow` in your config and restart or recreate the gateway so the generated `models.json` picks it up.
 - If chat “hangs/no reply”, restart the gateway and re-run the smoke test.

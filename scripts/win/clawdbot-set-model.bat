@@ -2,8 +2,8 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 rem Usage:
+rem   scripts\win\clawdbot-set-model.bat openai/gpt-5.4
 rem   scripts\win\clawdbot-set-model.bat openai/gpt-4o-mini
-rem   scripts\win\clawdbot-set-model.bat openai/gpt-5.2
 
 set "RC=0"
 set "DID_PUSHD="
@@ -19,7 +19,7 @@ set "DID_PUSHD=1"
 set "MODEL=%~1"
 if "%MODEL%"=="" (
   echo Usage: %~nx0 ^<model^>
-  echo Example: %~nx0 openai/gpt-4o-mini
+  echo Example: %~nx0 openai/gpt-5.4
   set "RC=2"
   goto cleanup
 )
