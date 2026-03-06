@@ -1,5 +1,4 @@
 import {
-  buildChannelConfigSchema,
   DEFAULT_ACCOUNT_ID,
   formatPairingApproveHint,
   missingTargetError,
@@ -17,7 +16,7 @@ import {
   resolveOneBotAccount,
   type ResolvedOneBotAccount,
 } from "./accounts.js";
-import { OneBotConfigSchema } from "./config-schema.js";
+import { onebotChannelConfigSchema } from "./config-schema.js";
 import {
   getOneBotLoginInfo,
   sendOneBotGroupMessage,
@@ -119,7 +118,7 @@ export const onebotPlugin: ChannelPlugin<ResolvedOneBotAccount> = {
     media: false,
   },
   reload: { configPrefixes: ["channels.onebot"] },
-  configSchema: buildChannelConfigSchema(OneBotConfigSchema),
+  configSchema: onebotChannelConfigSchema,
   config: {
     listAccountIds: (cfg) => listOneBotAccountIds(cfg),
     resolveAccount: (cfg, accountId) => resolveOneBotAccount({ cfg, accountId }),

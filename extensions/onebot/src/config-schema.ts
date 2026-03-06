@@ -43,11 +43,10 @@ export const OneBotConfigSchema = z
     groupAllowFrom: z.array(allowFromEntry).optional(),
 
     /** Group allowlist + per-group config (requireMention/tools). */
-    groups: z.record(OneBotGroupConfigSchema).optional(),
+    groups: z.record(z.string(), OneBotGroupConfigSchema.optional()).optional(),
   })
   .strict();
 
 export type OneBotConfig = z.infer<typeof OneBotConfigSchema>;
 
 export const onebotChannelConfigSchema = buildChannelConfigSchema(OneBotConfigSchema);
-
