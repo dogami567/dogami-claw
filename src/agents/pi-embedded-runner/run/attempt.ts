@@ -83,6 +83,7 @@ import { buildTtsSystemPromptHint } from "../../../tts/tts.js";
 import { isTimeoutError } from "../../failover-error.js";
 import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 import { MAX_IMAGE_BYTES } from "../../../media/constants.js";
+import { wrapStreamFnForStreamReadErrorRecovery } from "../stream-read-error-recovery.js";
 import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
 import { detectAndLoadPromptImages } from "./images.js";
 
@@ -486,7 +487,8 @@ export async function runEmbeddedAttempt(
       });
 
       // Force a stable streamFn reference so vitest can reliably mock @mariozechner/pi-ai.
-      activeSession.agent.streamFn = streamSimple;
+      // Also recover from OpenAI SDK stream_read_error (seen with some proxies) to avoid tearing down sessions.
+      activeSession.agent.streamFn = wrapStreamFnForStreamReadErrorRecovery(streamSimple);
 
       applyExtraParamsToAgent(
         activeSession.agent,
