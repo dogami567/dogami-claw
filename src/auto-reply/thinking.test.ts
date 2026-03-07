@@ -29,6 +29,10 @@ describe("listThinkingLevels", () => {
     expect(listThinkingLevels("openai", "gpt-5.2")).toContain("xhigh");
   });
 
+  it("includes xhigh for gpt-5.4 models wired through GMN", () => {
+    expect(listThinkingLevels("gmn", "gpt-5.4")).toContain("xhigh");
+  });
+
   it("excludes xhigh for non-codex models", () => {
     expect(listThinkingLevels(undefined, "gpt-4.1-mini")).not.toContain("xhigh");
   });

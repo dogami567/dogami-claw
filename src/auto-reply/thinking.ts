@@ -18,7 +18,9 @@ export function isBinaryThinkingProvider(provider?: string | null): boolean {
 }
 
 export const XHIGH_MODEL_REFS = [
+  "openai/gpt-5.4",
   "openai/gpt-5.2",
+  "gmn/gpt-5.4",
   "openai-codex/gpt-5.2-codex",
   "openai-codex/gpt-5.1-codex",
 ] as const;

@@ -128,6 +128,34 @@ describe("directive behavior", () => {
       expect(texts).toContain("Thinking level set to xhigh.");
     });
   });
+  it("accepts /thinking xhigh for gmn gpt-5.4", async () => {
+    await withTempHome(async (home) => {
+      const storePath = path.join(home, "sessions.json");
+
+      const res = await getReplyFromConfig(
+        {
+          Body: "/thinking xhigh",
+          From: "+1004",
+          To: "+2000",
+          CommandAuthorized: true,
+        },
+        {},
+        {
+          agents: {
+            defaults: {
+              model: "gmn/gpt-5.4",
+              workspace: path.join(home, "clawd"),
+            },
+          },
+          channels: { whatsapp: { allowFrom: ["*"] } },
+          session: { store: storePath },
+        },
+      );
+
+      const texts = (Array.isArray(res) ? res : [res]).map((entry) => entry?.text).filter(Boolean);
+      expect(texts).toContain("Thinking level set to xhigh.");
+    });
+  });
   it("rejects /thinking xhigh for non-codex models", async () => {
     await withTempHome(async (home) => {
       const storePath = path.join(home, "sessions.json");
@@ -153,9 +181,11 @@ describe("directive behavior", () => {
       );
 
       const texts = (Array.isArray(res) ? res : [res]).map((entry) => entry?.text).filter(Boolean);
-      expect(texts).toContain(
-        'Thinking level "xhigh" is only supported for openai/gpt-5.2, openai-codex/gpt-5.2-codex or openai-codex/gpt-5.1-codex.',
-      );
+      expect(
+        texts.some((text) => text?.startsWith('Thinking level "xhigh" is only supported for ')),
+      ).toBe(true);
+      expect(texts.join("\n")).toContain("openai/gpt-5.4");
+      expect(texts.join("\n")).toContain("gmn/gpt-5.4");
     });
   });
   it("keeps reserved command aliases from matching after trimming", async () => {
