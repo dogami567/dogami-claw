@@ -104,7 +104,12 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (!tempRoot) return;
-  await fs.rm(tempRoot, { recursive: true, force: true });
+  await fs.rm(tempRoot, {
+    recursive: true,
+    force: true,
+    maxRetries: process.platform === "win32" ? 10 : 0,
+    retryDelay: 100,
+  });
   tempRoot = undefined;
 });
 

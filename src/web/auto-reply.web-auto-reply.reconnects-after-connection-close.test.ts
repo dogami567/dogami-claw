@@ -157,7 +157,6 @@ describe("web auto-reply", () => {
     await run;
   });
   it("forces reconnect when watchdog closes without onClose", async () => {
-    vi.useFakeTimers();
     const sleep = vi.fn(async () => {});
     const closeResolvers: Array<(reason: unknown) => void> = [];
     let capturedOnMessage:
@@ -197,6 +196,8 @@ describe("web auto-reply", () => {
         heartbeatSeconds: 1,
         reconnect: { initialMs: 10, maxMs: 10, maxAttempts: 3, factor: 1.1 },
         sleep,
+        watchdogMessageTimeoutMs: 25,
+        watchdogCheckMs: 10,
       },
     );
 
@@ -216,16 +217,14 @@ describe("web auto-reply", () => {
       sendMedia,
     });
 
-    await vi.advanceTimersByTimeAsync(31 * 60 * 1000);
-    await Promise.resolve();
-
-    await vi.advanceTimersByTimeAsync(1);
-    await Promise.resolve();
+    const reconnectDeadline = Date.now() + 1000;
+    while (Date.now() < reconnectDeadline && listenerFactory.mock.calls.length < 2) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
     expect(listenerFactory).toHaveBeenCalledTimes(2);
 
     controller.abort();
     closeResolvers[1]?.({ status: 499, isLoggedOut: false });
-    await Promise.resolve();
     await run;
   }, 15_000);
 

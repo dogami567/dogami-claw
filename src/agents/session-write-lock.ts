@@ -17,6 +17,9 @@ const HELD_LOCKS = new Map<string, HeldLock>();
 const CLEANUP_SIGNALS = ["SIGINT", "SIGTERM", "SIGQUIT", "SIGABRT"] as const;
 type CleanupSignal = (typeof CLEANUP_SIGNALS)[number];
 const cleanupHandlers = new Map<CleanupSignal, () => void>();
+const handleProcessExit = () => {
+  releaseAllLocksSync();
+};
 
 function isAlive(pid: number): boolean {
   if (!Number.isFinite(pid) || pid <= 0) return false;
@@ -35,13 +38,8 @@ function isAlive(pid: number): boolean {
 function releaseAllLocksSync(): void {
   for (const [sessionFile, held] of HELD_LOCKS) {
     try {
-      if (typeof held.handle.fd === "number") {
-        fsSync.closeSync(held.handle.fd);
-      }
-    } catch {
-      // Ignore errors during cleanup - best effort
-    }
-    try {
+      // Best-effort lock-file cleanup is enough here. On exit the OS reclaims open handles, and
+      // Node 22 warns if we call closeSync on a FileHandle-managed fd directly.
       fsSync.rmSync(held.lockPath, { force: true });
     } catch {
       // Ignore errors during cleanup - best effort
@@ -71,9 +69,7 @@ function registerCleanupHandlers(): void {
   cleanupRegistered = true;
 
   // Cleanup on normal exit and process.exit() calls
-  process.on("exit", () => {
-    releaseAllLocksSync();
-  });
+  process.on("exit", handleProcessExit);
 
   // Handle termination signals
   for (const signal of CLEANUP_SIGNALS) {
@@ -184,5 +180,6 @@ export async function acquireSessionWriteLock(params: {
 export const __testing = {
   cleanupSignals: [...CLEANUP_SIGNALS],
   handleTerminationSignal,
+  handleProcessExit,
   releaseAllLocksSync,
 };

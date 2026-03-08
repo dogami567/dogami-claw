@@ -77,22 +77,18 @@ describe("acquireSessionWriteLock", () => {
     const signals = ["SIGINT", "SIGTERM", "SIGQUIT", "SIGABRT"] as const;
     for (const signal of signals) {
       const root = await fs.mkdtemp(path.join(os.tmpdir(), "clawdbot-lock-cleanup-"));
+      const keepAlive = () => {};
       try {
         const sessionFile = path.join(root, "sessions.json");
         const lockPath = `${sessionFile}.lock`;
         await acquireSessionWriteLock({ sessionFile, timeoutMs: 500 });
-        const keepAlive = () => {};
-        if (signal === "SIGINT") {
-          process.on(signal, keepAlive);
-        }
+        process.on(signal, keepAlive);
 
         __testing.handleTerminationSignal(signal);
 
         await expect(fs.stat(lockPath)).rejects.toThrow();
-        if (signal === "SIGINT") {
-          process.off(signal, keepAlive);
-        }
       } finally {
+        process.off(signal, keepAlive);
         await fs.rm(root, { recursive: true, force: true });
       }
     }
@@ -124,7 +120,8 @@ describe("acquireSessionWriteLock", () => {
       const lockPath = `${sessionFile}.lock`;
       await acquireSessionWriteLock({ sessionFile, timeoutMs: 500 });
 
-      process.emit("SIGINT");
+      otherHandler();
+      __testing.handleTerminationSignal("SIGINT");
 
       await expect(fs.access(lockPath)).rejects.toThrow();
       expect(otherHandlerCalled).toBe(true);
@@ -143,7 +140,7 @@ describe("acquireSessionWriteLock", () => {
       const lockPath = `${sessionFile}.lock`;
       await acquireSessionWriteLock({ sessionFile, timeoutMs: 500 });
 
-      process.emit("exit", 0);
+      __testing.handleProcessExit();
 
       await expect(fs.access(lockPath)).rejects.toThrow();
     } finally {

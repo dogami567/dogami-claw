@@ -1,10 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const lookupMock = vi.fn();
-
-vi.mock("node:dns/promises", () => ({
-  lookup: lookupMock,
-}));
+import { resolvePinnedHostname } from "../../infra/net/ssrf.js";
 
 function makeHeaders(map: Record<string, string>): { get: (key: string) => string | null } {
   return {
@@ -33,10 +29,20 @@ function textResponse(body: string): Response {
 describe("web_fetch SSRF protection", () => {
   const priorFetch = global.fetch;
 
+  function createResolvePinnedHost(records: Record<string, string>) {
+    return async (hostname: string) =>
+      await resolvePinnedHostname(hostname, async (resolvedHostname) => {
+        const address = records[resolvedHostname];
+        if (!address) {
+          throw new Error(`Unexpected hostname: ${resolvedHostname}`);
+        }
+        return [{ address, family: address.includes(":") ? 6 : 4 }];
+      });
+  }
+
   afterEach(() => {
     // @ts-expect-error restore
     global.fetch = priorFetch;
-    lookupMock.mockReset();
     vi.restoreAllMocks();
   });
 
@@ -63,7 +69,6 @@ describe("web_fetch SSRF protection", () => {
       /Blocked hostname/i,
     );
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(lookupMock).not.toHaveBeenCalled();
   });
 
   it("blocks private IP literals without DNS", async () => {
@@ -85,17 +90,9 @@ describe("web_fetch SSRF protection", () => {
       /private|internal|blocked/i,
     );
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(lookupMock).not.toHaveBeenCalled();
   });
 
   it("blocks when DNS resolves to private addresses", async () => {
-    lookupMock.mockImplementation(async (hostname: string) => {
-      if (hostname === "public.test") {
-        return [{ address: "93.184.216.34", family: 4 }];
-      }
-      return [{ address: "10.0.0.5", family: 4 }];
-    });
-
     const fetchSpy = vi.fn();
     // @ts-expect-error mock fetch
     global.fetch = fetchSpy;
@@ -105,6 +102,9 @@ describe("web_fetch SSRF protection", () => {
       config: {
         tools: { web: { fetch: { cacheTtlMinutes: 0, firecrawl: { enabled: false } } } },
       },
+      resolvePinnedHost: createResolvePinnedHost({
+        "private.test": "10.0.0.5",
+      }),
     });
 
     await expect(tool?.execute?.("call", { url: "https://private.test/resource" })).rejects.toThrow(
@@ -114,8 +114,6 @@ describe("web_fetch SSRF protection", () => {
   });
 
   it("blocks redirects to private hosts", async () => {
-    lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
-
     const fetchSpy = vi.fn().mockResolvedValueOnce(redirectResponse("http://127.0.0.1/secret"));
     // @ts-expect-error mock fetch
     global.fetch = fetchSpy;
@@ -129,6 +127,9 @@ describe("web_fetch SSRF protection", () => {
           },
         },
       },
+      resolvePinnedHost: createResolvePinnedHost({
+        "example.com": "93.184.216.34",
+      }),
     });
 
     await expect(tool?.execute?.("call", { url: "https://example.com" })).rejects.toThrow(
@@ -138,8 +139,6 @@ describe("web_fetch SSRF protection", () => {
   });
 
   it("allows public hosts", async () => {
-    lookupMock.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
-
     const fetchSpy = vi.fn().mockResolvedValue(textResponse("ok"));
     // @ts-expect-error mock fetch
     global.fetch = fetchSpy;
@@ -149,6 +148,9 @@ describe("web_fetch SSRF protection", () => {
       config: {
         tools: { web: { fetch: { cacheTtlMinutes: 0, firecrawl: { enabled: false } } } },
       },
+      resolvePinnedHost: createResolvePinnedHost({
+        "example.com": "93.184.216.34",
+      }),
     });
 
     const result = await tool?.execute?.("call", { url: "https://example.com" });

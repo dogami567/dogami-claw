@@ -173,11 +173,13 @@ async function fetchWithRedirects(params: {
   maxRedirects: number;
   timeoutSeconds: number;
   userAgent: string;
+  resolvePinnedHost?: typeof resolvePinnedHostname;
 }): Promise<{ response: Response; finalUrl: string; dispatcher: Dispatcher }> {
   const signal = withTimeout(undefined, params.timeoutSeconds * 1000);
   const visited = new Set<string>();
   let currentUrl = params.url;
   let redirectCount = 0;
+  const resolvePinnedHost = params.resolvePinnedHost ?? resolvePinnedHostname;
 
   while (true) {
     let parsedUrl: URL;
@@ -190,7 +192,7 @@ async function fetchWithRedirects(params: {
       throw new Error("Invalid URL: must be http or https");
     }
 
-    const pinned = await resolvePinnedHostname(parsedUrl.hostname);
+    const pinned = await resolvePinnedHost(parsedUrl.hostname);
     const dispatcher = createPinnedDispatcher(pinned);
     let res: Response;
     try {
@@ -346,6 +348,7 @@ async function runWebFetch(params: {
   firecrawlProxy: "auto" | "basic" | "stealth";
   firecrawlStoreInCache: boolean;
   firecrawlTimeoutSeconds: number;
+  resolvePinnedHost?: typeof resolvePinnedHostname;
 }): Promise<Record<string, unknown>> {
   const cacheKey = normalizeCacheKey(
     `fetch:${params.url}:${params.extractMode}:${params.maxChars}`,
@@ -373,6 +376,7 @@ async function runWebFetch(params: {
       maxRedirects: params.maxRedirects,
       timeoutSeconds: params.timeoutSeconds,
       userAgent: params.userAgent,
+      resolvePinnedHost: params.resolvePinnedHost,
     });
     res = result.response;
     finalUrl = result.finalUrl;
@@ -572,6 +576,7 @@ function resolveFirecrawlEndpoint(baseUrl: string): string {
 export function createWebFetchTool(options?: {
   config?: ClawdbotConfig;
   sandboxed?: boolean;
+  resolvePinnedHost?: typeof resolvePinnedHostname;
 }): AnyAgentTool | null {
   const fetch = resolveFetchConfig(options?.config);
   if (!resolveFetchEnabled({ fetch, sandboxed: options?.sandboxed })) return null;
@@ -617,6 +622,8 @@ export function createWebFetchTool(options?: {
         firecrawlProxy: "auto",
         firecrawlStoreInCache: true,
         firecrawlTimeoutSeconds,
+        // Allow tests to inject deterministic hostname resolution without changing runtime behavior.
+        resolvePinnedHost: options?.resolvePinnedHost,
       });
       return jsonResult(result);
     },

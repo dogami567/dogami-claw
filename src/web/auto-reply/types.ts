@@ -28,6 +28,8 @@ export type WebMonitorTuning = {
   heartbeatSeconds?: number;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   statusSink?: (status: WebChannelStatus) => void;
+  watchdogMessageTimeoutMs?: number;
+  watchdogCheckMs?: number;
   /** WhatsApp account id. Default: "default". */
   accountId?: string;
   /** Debounce window (ms) for batching rapid consecutive messages from the same sender. */

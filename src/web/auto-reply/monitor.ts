@@ -116,6 +116,8 @@ export async function monitorWebChannel(
   const sleep =
     tuning.sleep ??
     ((ms: number, signal?: AbortSignal) => sleepWithAbort(ms, signal ?? abortSignal));
+  const watchdogMessageTimeoutMs = Math.max(1, tuning.watchdogMessageTimeoutMs ?? 30 * 60 * 1000);
+  const watchdogCheckMs = Math.max(1, tuning.watchdogCheckMs ?? 60 * 1000);
   const stopRequested = () => abortSignal?.aborted === true;
   const abortPromise =
     abortSignal &&
@@ -151,10 +153,6 @@ export async function monitorWebChannel(
     let handledMessages = 0;
     let _lastInboundMsg: WebInboundMsg | null = null;
     let unregisterUnhandled: (() => void) | null = null;
-
-    // Watchdog to detect stuck message processing (e.g., event emitter died)
-    const MESSAGE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes without any messages
-    const WATCHDOG_CHECK_MS = 60 * 1000; // Check every minute
 
     const backgroundTasks = new Set<Promise<unknown>>();
     const onMessage = createWebOnMessageHandler({
@@ -281,7 +279,7 @@ export async function monitorWebChannel(
       watchdogTimer = setInterval(() => {
         if (!lastMessageAt) return;
         const timeSinceLastMessage = Date.now() - lastMessageAt;
-        if (timeSinceLastMessage <= MESSAGE_TIMEOUT_MS) return;
+        if (timeSinceLastMessage <= watchdogMessageTimeoutMs) return;
         const minutesSinceLastMessage = Math.floor(timeSinceLastMessage / 60000);
         heartbeatLogger.warn(
           {
@@ -303,7 +301,7 @@ export async function monitorWebChannel(
           isLoggedOut: false,
           error: "watchdog-timeout",
         });
-      }, WATCHDOG_CHECK_MS);
+      }, watchdogCheckMs);
     }
 
     whatsappLog.info("Listening for personal WhatsApp inbound messages.");

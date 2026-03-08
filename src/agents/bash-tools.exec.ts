@@ -898,14 +898,14 @@ export function createExecTool(
       const baseEnv = coerceEnv(process.env);
       const mergedEnv =
         params.env || Object.keys(execContextEnv).length > 0
-          ? { ...baseEnv, ...(params.env ?? {}), ...execContextEnv }
+          ? { ...baseEnv, ...params.env, ...execContextEnv }
           : baseEnv;
       const env = sandbox
         ? buildSandboxEnv({
             defaultPath: DEFAULT_PATH,
             paramsEnv:
               params.env || Object.keys(execContextEnv).length > 0
-                ? { ...(params.env ?? {}), ...execContextEnv }
+                ? { ...params.env, ...execContextEnv }
                 : undefined,
             sandboxEnv: sandbox.env,
             containerWorkdir: containerWorkdir ?? sandbox.containerWorkdir,
@@ -963,7 +963,7 @@ export function createExecTool(
         const argv = buildNodeShellCommand(params.command, nodeInfo?.platform);
         const nodeEnv =
           params.env || Object.keys(execContextEnv).length > 0
-            ? { ...(params.env ?? {}), ...execContextEnv }
+            ? { ...params.env, ...execContextEnv }
             : undefined;
         if (nodeEnv) {
           applyPathPrepend(nodeEnv, defaultPathPrepend, { requireExisting: true });

@@ -174,6 +174,19 @@ describe("exec tool backgrounding", () => {
     const result = await customBash.execute("call1", {
       command: "echo hi",
     });
+    const status = (result.details as { status?: string }).status ?? "completed";
+    if (status === "running") {
+      const sessionId = (result.details as { sessionId: string }).sessionId;
+      expect(await waitForCompletion(sessionId)).toBe("completed");
+      const log = await processTool.execute("call-followup", {
+        action: "log",
+        sessionId,
+      });
+      const text = log.content.find((c) => c.type === "text")?.text ?? "";
+      expect(normalizeText(text)).toContain("hi");
+      return;
+    }
+
     const text = result.content.find((c) => c.type === "text")?.text ?? "";
     expect(text).toContain("hi");
   });

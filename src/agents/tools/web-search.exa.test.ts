@@ -96,10 +96,10 @@ describe("web_search exa provider", () => {
     expect(firstHeaders["x-api-key"]).toBe("key-1");
     expect(secondHeaders["x-api-key"]).toBe("key-2");
 
-    const secondBody = JSON.parse(String(mockFetch.mock.calls[1]?.[1]?.body ?? "{}")) as Record<
-      string,
-      unknown
-    >;
+    const rawSecondBody = mockFetch.mock.calls[1]?.[1]?.body;
+    const secondBodyText =
+      typeof rawSecondBody === "string" ? rawSecondBody : JSON.stringify(rawSecondBody ?? {});
+    const secondBody = JSON.parse(secondBodyText) as Record<string, unknown>;
     expect(secondBody).toMatchObject({
       query: "hello",
       num_results: 1,
