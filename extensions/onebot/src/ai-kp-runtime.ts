@@ -1,7 +1,12 @@
 import { createRequire } from "node:module";
+import { existsSync } from "node:fs";
 
 import type { ClawdbotConfig } from "clawdbot/plugin-sdk";
 
+import {
+  classifyOneBotAiKpActivation,
+  type OneBotAiKpActivationDecision,
+} from "./ai-kp-activation.js";
 import { resolveOneBotAiKpConfig } from "./ai-kp-context.js";
 
 type OneBotMessageEvent = {
@@ -55,6 +60,44 @@ export type OneBotAiKpHandledResult = {
   routing?: unknown;
 };
 
+function buildSyntheticEnvelope(params: {
+  envelope: OneBotMessageEvent;
+  cleanedText?: string;
+  decision: OneBotAiKpActivationDecision;
+}): OneBotMessageEvent {
+  const originalText =
+    params.cleanedText?.trim() ||
+    String(params.envelope.raw_message ?? params.envelope.message ?? "").trim();
+
+  let rewritten = originalText;
+  switch (params.decision.action) {
+    case "start":
+      rewritten = "我想跑团";
+      break;
+    case "resume":
+      rewritten = "续上";
+      break;
+    case "new":
+      rewritten = "新开";
+      break;
+    case "exit":
+      rewritten = "先不跑了";
+      break;
+    case "roll":
+      rewritten = `我要车卡，${originalText}`.trim();
+      break;
+    case "normal":
+    default:
+      break;
+  }
+
+  return {
+    ...params.envelope,
+    message: rewritten,
+    raw_message: rewritten,
+  };
+}
+
 const requireForRuntime = createRequire(import.meta.url);
 const runtimeModuleCache = new Map<string, AiKpRuntimeModule>();
 
@@ -107,9 +150,18 @@ export async function maybeHandleOneBotAiKpRuntime(params: {
   envelope: OneBotMessageEvent;
   wasMentioned: boolean;
   isGroup: boolean;
+  cleanedText?: string;
+  agentId?: string | null;
   sendText: (params: { target: string; text: string }) => Promise<{ messageId?: string }>;
   statusSink?: (patch: { lastInboundAt?: number; lastOutboundAt?: number }) => void;
   onError?: (message: string) => void;
+  classifyActivationIntent?: (params: {
+    cfg: ClawdbotConfig;
+    text: string;
+    agentId?: string | null;
+    hasExistingContext?: boolean;
+    onError?: (message: string) => void;
+  }) => Promise<OneBotAiKpActivationDecision | null>;
 }): Promise<OneBotAiKpHandledResult | null> {
   const config = resolveOneBotAiKpConfig(params.cfg);
   if (!config.enabled || !config.delegateToRuntime || !config.runtimeModulePath) return null;
@@ -119,12 +171,40 @@ export async function maybeHandleOneBotAiKpRuntime(params: {
   const runtimeModule = loadAiKpRuntimeModule(config.runtimeModulePath, params.onError);
   if (!runtimeModule) return null;
 
-  const result = runtimeModule.handleOneBotEnvelope(params.envelope, {
+  let result = runtimeModule.handleOneBotEnvelope(params.envelope, {
     storageRoot: config.storageRoot,
     includeContextPacket: true,
     allowDirectMessages: config.allowDirectMessages,
     allowNaturalActivation: config.allowNaturalActivation,
   });
+  if (result?.ignored && config.activationRouterEnabled) {
+    const classifyActivationIntent = params.classifyActivationIntent ?? classifyOneBotAiKpActivation;
+    const decision = await classifyActivationIntent({
+      cfg: params.cfg,
+      text:
+        params.cleanedText?.trim() ||
+        String(params.envelope.raw_message ?? params.envelope.message ?? "").trim(),
+      agentId: params.agentId,
+      hasExistingContext:
+        typeof result.contextRef === "string" && result.contextRef.length > 0
+          ? existsSync(result.contextRef)
+          : false,
+      onError: params.onError,
+    });
+    if (decision && decision.action !== "normal" && result.reason === "inactive_group_session") {
+      const syntheticEnvelope = buildSyntheticEnvelope({
+        envelope: params.envelope,
+        cleanedText: params.cleanedText,
+        decision,
+      });
+      result = runtimeModule.handleOneBotEnvelope(syntheticEnvelope, {
+        storageRoot: config.storageRoot,
+        includeContextPacket: true,
+        allowDirectMessages: config.allowDirectMessages,
+        allowNaturalActivation: config.allowNaturalActivation,
+      });
+    }
+  }
   if (!result || result.ignored) {
     return {
       handled: false,

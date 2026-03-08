@@ -217,6 +217,16 @@ async function processInboundMessage(params: {
   let aiKpContext: OneBotAiKpContextState | null = null;
   let effectiveWasMentioned = isGroup ? extracted.wasMentioned : true;
   let groupSystemPrompt: string | undefined;
+  const peer = {
+    kind: isGroup ? ("group" as const) : ("dm" as const),
+    id: isGroup ? (groupId ?? senderId) : senderId,
+  };
+  const route = core.channel.routing.resolveAgentRoute({
+    cfg,
+    channel: "onebot",
+    accountId: account.accountId,
+    peer,
+  });
 
   const onebotCfg = (cfg.channels as Record<string, unknown> | undefined)?.onebot as
     | {
@@ -328,6 +338,8 @@ async function processInboundMessage(params: {
       envelope: evt,
       wasMentioned: effectiveWasMentioned,
       isGroup: true,
+      cleanedText: rawBody,
+      agentId: route.agentId,
       sendText: helpers.sendText,
       statusSink,
       onError: logVerbose,
@@ -384,6 +396,8 @@ async function processInboundMessage(params: {
       envelope: evt,
       wasMentioned: true,
       isGroup: false,
+      cleanedText: rawBody,
+      agentId: route.agentId,
       sendText: helpers.sendText,
       statusSink,
       onError: logVerbose,
@@ -392,18 +406,6 @@ async function processInboundMessage(params: {
       return;
     }
   }
-
-  const peer = {
-    kind: isGroup ? ("group" as const) : ("dm" as const),
-    id: isGroup ? (groupId ?? senderId) : senderId,
-  };
-
-  const route = core.channel.routing.resolveAgentRoute({
-    cfg,
-    channel: "onebot",
-    accountId: account.accountId,
-    peer,
-  });
 
   const storePath = core.channel.session.resolveStorePath(cfg.session?.store, {
     agentId: route.agentId,

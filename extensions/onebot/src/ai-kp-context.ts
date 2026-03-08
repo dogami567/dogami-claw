@@ -57,6 +57,12 @@ export type OneBotAiKpConfig = {
   allowDirectMessages?: boolean;
   allowNaturalActivation?: boolean;
   bypassMentionWhenActive?: boolean;
+  activationRouterEnabled?: boolean;
+  activationRouterProvider?: string;
+  activationRouterModel?: string;
+  activationRouterAuthProfileId?: string;
+  activationRouterMaxTokens?: number;
+  activationRouterTimeoutMs?: number;
   summaryChunkLimit?: number;
   recentChatLimit?: number;
   recentOperationLimit?: number;
@@ -71,6 +77,12 @@ export type ResolvedOneBotAiKpConfig = {
   allowDirectMessages: boolean;
   allowNaturalActivation: boolean;
   bypassMentionWhenActive: boolean;
+  activationRouterEnabled: boolean;
+  activationRouterProvider?: string;
+  activationRouterModel?: string;
+  activationRouterAuthProfileId?: string;
+  activationRouterMaxTokens?: number;
+  activationRouterTimeoutMs?: number;
   summaryChunkLimit: number;
   recentChatLimit: number;
   recentOperationLimit: number;
@@ -156,6 +168,18 @@ export function resolveOneBotAiKpConfig(cfg: ClawdbotConfig): ResolvedOneBotAiKp
     allowDirectMessages: raw.allowDirectMessages === true,
     allowNaturalActivation: raw.allowNaturalActivation !== false,
     bypassMentionWhenActive: raw.bypassMentionWhenActive === true,
+    activationRouterEnabled: raw.activationRouterEnabled !== false,
+    activationRouterProvider: raw.activationRouterProvider?.trim() || undefined,
+    activationRouterModel: raw.activationRouterModel?.trim() || undefined,
+    activationRouterAuthProfileId: raw.activationRouterAuthProfileId?.trim() || undefined,
+    activationRouterMaxTokens:
+      typeof raw.activationRouterMaxTokens === "number" && raw.activationRouterMaxTokens > 0
+        ? raw.activationRouterMaxTokens
+        : undefined,
+    activationRouterTimeoutMs:
+      typeof raw.activationRouterTimeoutMs === "number" && raw.activationRouterTimeoutMs > 0
+        ? raw.activationRouterTimeoutMs
+        : undefined,
     summaryChunkLimit: Math.max(1, Math.min(3, raw.summaryChunkLimit ?? DEFAULT_SUMMARY_CHUNK_LIMIT)),
     recentChatLimit: Math.max(1, Math.min(8, raw.recentChatLimit ?? DEFAULT_RECENT_CHAT_LIMIT)),
     recentOperationLimit: Math.max(

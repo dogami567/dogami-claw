@@ -117,6 +117,107 @@ describe("maybeHandleOneBotAiKpRuntime", () => {
     expect(sendText).not.toHaveBeenCalled();
   });
 
+  it("reroutes ignored idle messages through the activation classifier", async () => {
+    const runtimeModulePath = await createRuntimeModule(`
+      module.exports = {
+        handleOneBotEnvelope(envelope) {
+          const text = String(envelope.raw_message || envelope.message || "");
+          if (text === "我想跑团") {
+            return {
+              ignored: false,
+              reason: null,
+              replyText: "AI-KP entered",
+              sendAction: { action: "send_group_msg", params: { group_id: "875336657", message: "AI-KP entered" } },
+              contextRef: "/tmp/context.json"
+            };
+          }
+          return {
+            ignored: true,
+            reason: "inactive_group_session",
+            replyText: null,
+            sendAction: null
+          };
+        }
+      };
+    `);
+    const sendText = vi.fn(async () => ({ messageId: "1" }));
+    const classifyActivationIntent = vi.fn(async () => ({
+      action: "start" as const,
+      confidence: 0.92,
+      reason: "direct play request",
+    }));
+
+    const result = await maybeHandleOneBotAiKpRuntime({
+      cfg: buildConfig(runtimeModulePath),
+      envelope: {
+        post_type: "message",
+        message_type: "group",
+        group_id: "875336657",
+        user_id: "281894872",
+        raw_message: "@麦麦 咱们今晚来一把克系调查吧",
+      },
+      cleanedText: "咱们今晚来一把克系调查吧",
+      wasMentioned: true,
+      isGroup: true,
+      sendText,
+      classifyActivationIntent,
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      replyText: "AI-KP entered",
+    });
+    expect(classifyActivationIntent).toHaveBeenCalledOnce();
+    expect(sendText).toHaveBeenCalledWith({
+      target: "group:875336657",
+      text: "AI-KP entered",
+    });
+  });
+
+  it("keeps ordinary chat on the normal fallback path when the classifier says normal", async () => {
+    const runtimeModulePath = await createRuntimeModule(`
+      module.exports = {
+        handleOneBotEnvelope() {
+          return {
+            ignored: true,
+            reason: "inactive_group_session",
+            replyText: null,
+            sendAction: null
+          };
+        }
+      };
+    `);
+    const sendText = vi.fn(async () => ({ messageId: "1" }));
+    const classifyActivationIntent = vi.fn(async () => ({
+      action: "normal" as const,
+      confidence: 0.81,
+      reason: "ordinary chat",
+    }));
+
+    const result = await maybeHandleOneBotAiKpRuntime({
+      cfg: buildConfig(runtimeModulePath),
+      envelope: {
+        post_type: "message",
+        message_type: "group",
+        group_id: "875336657",
+        user_id: "281894872",
+        raw_message: "@麦麦 今天午饭吃啥",
+      },
+      cleanedText: "今天午饭吃啥",
+      wasMentioned: true,
+      isGroup: true,
+      sendText,
+      classifyActivationIntent,
+    });
+
+    expect(result).toMatchObject({
+      handled: false,
+      reason: "inactive_group_session",
+    });
+    expect(classifyActivationIntent).toHaveBeenCalledOnce();
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
   it("does not delegate unmentioned group messages", async () => {
     const runtimeModulePath = await createRuntimeModule(`
       module.exports = {
