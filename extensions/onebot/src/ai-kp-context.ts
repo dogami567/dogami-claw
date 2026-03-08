@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -51,6 +52,10 @@ type AiKpContextPacket = {
 export type OneBotAiKpConfig = {
   enabled?: boolean;
   storageRoot?: string;
+  runtimeModulePath?: string;
+  delegateToRuntime?: boolean;
+  allowDirectMessages?: boolean;
+  allowNaturalActivation?: boolean;
   bypassMentionWhenActive?: boolean;
   summaryChunkLimit?: number;
   recentChatLimit?: number;
@@ -61,6 +66,10 @@ export type OneBotAiKpConfig = {
 export type ResolvedOneBotAiKpConfig = {
   enabled: boolean;
   storageRoot?: string;
+  runtimeModulePath?: string;
+  delegateToRuntime: boolean;
+  allowDirectMessages: boolean;
+  allowNaturalActivation: boolean;
   bypassMentionWhenActive: boolean;
   summaryChunkLimit: number;
   recentChatLimit: number;
@@ -106,10 +115,35 @@ function resolveOneBotAiKpRawConfig(cfg: ClawdbotConfig): OneBotAiKpConfig {
   return isRecord(aiKp) ? (aiKp as OneBotAiKpConfig) : {};
 }
 
-function resolveDefaultStorageRoot(cfg: ClawdbotConfig): string | undefined {
+function resolveAiKpBaseDirCandidates(cfg: ClawdbotConfig): string[] {
+  const candidates: string[] = [];
   const workspace = cfg.agents?.defaults?.workspace?.trim();
-  if (!workspace) return undefined;
-  return path.join(workspace, "clawd-ai-kp", "runtime", "onebot");
+  if (workspace) {
+    candidates.push(path.join(workspace, "clawd-ai-kp"));
+  }
+  candidates.push(path.resolve(process.cwd(), ".runtime", "workspace", "clawd-ai-kp"));
+  return candidates.filter((candidate, index, list) => candidate && list.indexOf(candidate) === index);
+}
+
+function resolveDefaultAiKpBaseDir(cfg: ClawdbotConfig): string | undefined {
+  const candidates = resolveAiKpBaseDirCandidates(cfg);
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
+  }
+  return candidates[0];
+}
+
+function resolveDefaultStorageRoot(cfg: ClawdbotConfig): string | undefined {
+  const baseDir = resolveDefaultAiKpBaseDir(cfg);
+  if (!baseDir) return undefined;
+  return path.join(baseDir, "runtime", "onebot");
+}
+
+function resolveDefaultRuntimeModulePath(cfg: ClawdbotConfig): string | undefined {
+  const baseDir = resolveDefaultAiKpBaseDir(cfg);
+  if (!baseDir) return undefined;
+  const modulePath = path.join(baseDir, "adapter", "onebot", "runtime.js");
+  return existsSync(modulePath) ? modulePath : undefined;
 }
 
 export function resolveOneBotAiKpConfig(cfg: ClawdbotConfig): ResolvedOneBotAiKpConfig {
@@ -117,6 +151,10 @@ export function resolveOneBotAiKpConfig(cfg: ClawdbotConfig): ResolvedOneBotAiKp
   return {
     enabled: raw.enabled !== false,
     storageRoot: raw.storageRoot?.trim() || resolveDefaultStorageRoot(cfg),
+    runtimeModulePath: raw.runtimeModulePath?.trim() || resolveDefaultRuntimeModulePath(cfg),
+    delegateToRuntime: raw.delegateToRuntime !== false,
+    allowDirectMessages: raw.allowDirectMessages === true,
+    allowNaturalActivation: raw.allowNaturalActivation !== false,
     bypassMentionWhenActive: raw.bypassMentionWhenActive === true,
     summaryChunkLimit: Math.max(1, Math.min(3, raw.summaryChunkLimit ?? DEFAULT_SUMMARY_CHUNK_LIMIT)),
     recentChatLimit: Math.max(1, Math.min(8, raw.recentChatLimit ?? DEFAULT_RECENT_CHAT_LIMIT)),

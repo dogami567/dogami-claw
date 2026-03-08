@@ -13,6 +13,10 @@ export const OneBotAiKpConfigSchema = z
   .object({
     enabled: z.boolean().optional(),
     storageRoot: z.string().optional(),
+    runtimeModulePath: z.string().optional(),
+    delegateToRuntime: z.boolean().optional(),
+    allowDirectMessages: z.boolean().optional(),
+    allowNaturalActivation: z.boolean().optional(),
     bypassMentionWhenActive: z.boolean().optional(),
     summaryChunkLimit: z.number().int().positive().optional(),
     recentChatLimit: z.number().int().positive().optional(),

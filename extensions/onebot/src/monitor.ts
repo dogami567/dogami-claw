@@ -11,8 +11,10 @@ import type { ResolvedOneBotAccount } from "./accounts.js";
 import {
   loadOneBotAiKpContext,
   mergeOneBotGroupSystemPrompt,
+  type OneBotAiKpContextState,
   resolveOneBotAiKpConfig,
 } from "./ai-kp-context.js";
+import { maybeHandleOneBotAiKpRuntime } from "./ai-kp-runtime.js";
 
 type ChannelLog = {
   info: (message: string) => void;
@@ -212,7 +214,7 @@ async function processInboundMessage(params: {
   });
   const rawBody = extracted.text;
   if (!rawBody.trim()) return;
-  let aiKpContext: Awaited<ReturnType<typeof loadOneBotAiKpContext>> = null;
+  let aiKpContext: OneBotAiKpContextState | null = null;
   let effectiveWasMentioned = isGroup ? extracted.wasMentioned : true;
   let groupSystemPrompt: string | undefined;
 
@@ -282,13 +284,15 @@ async function processInboundMessage(params: {
       return;
     }
 
-    const groupConfig = helpers.resolveGroupConfig(groupId ?? "");
-    aiKpContext = await loadOneBotAiKpContext({
-      cfg,
-      groupId,
-      onError: logVerbose,
-    });
     const aiKpConfig = resolveOneBotAiKpConfig(cfg);
+    const groupConfig = helpers.resolveGroupConfig(groupId ?? "");
+    if (aiKpConfig.bypassMentionWhenActive) {
+      aiKpContext = await loadOneBotAiKpContext({
+        cfg,
+        groupId,
+        onError: logVerbose,
+      });
+    }
     const allowTextCommands = core.channel.commands.shouldHandleTextCommands({
       cfg,
       surface: "onebot",
@@ -318,6 +322,31 @@ async function processInboundMessage(params: {
       logVerbose(`onebot: drop control command from ${senderId}`);
       return;
     }
+
+    const aiKpHandled = await maybeHandleOneBotAiKpRuntime({
+      cfg,
+      envelope: evt,
+      wasMentioned: effectiveWasMentioned,
+      isGroup: true,
+      sendText: helpers.sendText,
+      statusSink,
+      onError: logVerbose,
+    });
+    if (aiKpHandled?.handled) {
+      return;
+    }
+
+    aiKpContext =
+      aiKpContext ??
+      (await loadOneBotAiKpContext({
+        cfg,
+        groupId,
+        onError: logVerbose,
+      }));
+    groupSystemPrompt = mergeOneBotGroupSystemPrompt([
+      groupConfig.systemPrompt,
+      aiKpContext?.active ? aiKpContext.promptBlock : undefined,
+    ]);
   } else {
     if (dmPolicy === "disabled") return;
     if (dmPolicy !== "open") {
@@ -348,6 +377,19 @@ async function processInboundMessage(params: {
         }
         return;
       }
+    }
+
+    const aiKpHandled = await maybeHandleOneBotAiKpRuntime({
+      cfg,
+      envelope: evt,
+      wasMentioned: true,
+      isGroup: false,
+      sendText: helpers.sendText,
+      statusSink,
+      onError: logVerbose,
+    });
+    if (aiKpHandled?.handled) {
+      return;
     }
   }
 
