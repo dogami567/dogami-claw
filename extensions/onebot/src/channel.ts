@@ -1,6 +1,7 @@
 import {
   DEFAULT_ACCOUNT_ID,
   formatPairingApproveHint,
+  joinPromptBlocks,
   missingTargetError,
   PAIRING_APPROVED_MESSAGE,
   resolveMentionGatingWithBypass,
@@ -58,18 +59,34 @@ function isAllowedSender(senderId: string, allowFrom: Array<string | number> | u
   return normalizeAllowFrom(list).includes(senderId);
 }
 
+type ResolvedOneBotGroupConfig = {
+  requireMention: boolean;
+  systemPrompt?: string;
+  tools?: GroupToolPolicyConfig;
+};
+
 function resolveOneBotGroupConfig(params: {
   cfg: ClawdbotConfig;
   groupId?: string | null;
-}): { requireMention: boolean; tools?: GroupToolPolicyConfig } {
+}): ResolvedOneBotGroupConfig {
   const raw = (params.cfg.channels as Record<string, unknown> | undefined)?.onebot as
-    | { groups?: Record<string, { requireMention?: boolean; tools?: GroupToolPolicyConfig }> }
+    | {
+        groups?: Record<
+          string,
+          {
+            requireMention?: boolean;
+            systemPrompt?: string;
+            tools?: GroupToolPolicyConfig;
+          }
+        >;
+      }
     | undefined;
   const groups = raw?.groups ?? {};
   const groupId = params.groupId?.trim() ?? "";
   const entry = (groupId && groups[groupId]) || groups["*"] || {};
   return {
     requireMention: typeof entry.requireMention === "boolean" ? entry.requireMention : true,
+    systemPrompt: joinPromptBlocks([entry.systemPrompt]),
     tools: entry.tools,
   };
 }

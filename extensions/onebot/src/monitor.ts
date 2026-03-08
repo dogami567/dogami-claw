@@ -8,6 +8,11 @@ import type { PluginRuntime } from "clawdbot/plugin-sdk";
 import WebSocket from "ws";
 
 import type { ResolvedOneBotAccount } from "./accounts.js";
+import {
+  loadOneBotAiKpContext,
+  mergeOneBotGroupSystemPrompt,
+  resolveOneBotAiKpConfig,
+} from "./ai-kp-context.js";
 
 type ChannelLog = {
   info: (message: string) => void;
@@ -58,7 +63,11 @@ export async function monitorOneBotProvider(params: {
   abortSignal: AbortSignal;
   log?: ChannelLog;
   statusSink?: (patch: { lastInboundAt?: number; lastOutboundAt?: number }) => void;
-  resolveGroupConfig: (groupId: string) => { requireMention: boolean; tools?: GroupToolPolicyConfig };
+  resolveGroupConfig: (groupId: string) => {
+    requireMention: boolean;
+    systemPrompt?: string;
+    tools?: GroupToolPolicyConfig;
+  };
   isAllowedSender: (senderId: string, allowFrom: Array<string | number> | undefined) => boolean;
   normalizeAllowFrom: (values: Array<string | number> | undefined) => string[];
   resolveMentionGatingWithBypass: typeof import("clawdbot/plugin-sdk").resolveMentionGatingWithBypass;
@@ -173,7 +182,11 @@ async function processInboundMessage(params: {
   logVerbose: (message: string) => void;
   statusSink?: (patch: { lastInboundAt?: number; lastOutboundAt?: number }) => void;
   helpers: {
-    resolveGroupConfig: (groupId: string) => { requireMention: boolean; tools?: GroupToolPolicyConfig };
+    resolveGroupConfig: (groupId: string) => {
+      requireMention: boolean;
+      systemPrompt?: string;
+      tools?: GroupToolPolicyConfig;
+    };
     isAllowedSender: (senderId: string, allowFrom: Array<string | number> | undefined) => boolean;
     normalizeAllowFrom: (values: Array<string | number> | undefined) => string[];
     resolveMentionGatingWithBypass: typeof import("clawdbot/plugin-sdk").resolveMentionGatingWithBypass;
@@ -199,6 +212,9 @@ async function processInboundMessage(params: {
   });
   const rawBody = extracted.text;
   if (!rawBody.trim()) return;
+  let aiKpContext: Awaited<ReturnType<typeof loadOneBotAiKpContext>> = null;
+  let effectiveWasMentioned = isGroup ? extracted.wasMentioned : true;
+  let groupSystemPrompt: string | undefined;
 
   const onebotCfg = (cfg.channels as Record<string, unknown> | undefined)?.onebot as
     | {
@@ -267,6 +283,12 @@ async function processInboundMessage(params: {
     }
 
     const groupConfig = helpers.resolveGroupConfig(groupId ?? "");
+    aiKpContext = await loadOneBotAiKpContext({
+      cfg,
+      groupId,
+      onError: logVerbose,
+    });
+    const aiKpConfig = resolveOneBotAiKpConfig(cfg);
     const allowTextCommands = core.channel.commands.shouldHandleTextCommands({
       cfg,
       surface: "onebot",
@@ -276,7 +298,7 @@ async function processInboundMessage(params: {
       requireMention: groupConfig.requireMention,
       canDetectMention: true,
       wasMentioned: extracted.wasMentioned,
-      implicitMention: false,
+      implicitMention: Boolean(aiKpContext?.active && aiKpConfig.bypassMentionWhenActive),
       hasAnyMention: extracted.hasAnyMention,
       allowTextCommands,
       hasControlCommand: core.channel.text.hasControlCommand(rawBody, cfg),
@@ -286,6 +308,11 @@ async function processInboundMessage(params: {
       logVerbose("onebot: drop group message (mention required)");
       return;
     }
+    effectiveWasMentioned = mentionGate.effectiveWasMentioned;
+    groupSystemPrompt = mergeOneBotGroupSystemPrompt([
+      groupConfig.systemPrompt,
+      aiKpContext?.active ? aiKpContext.promptBlock : undefined,
+    ]);
 
     if (core.channel.commands.isControlCommandMessage(rawBody, cfg) && commandAuthorized !== true) {
       logVerbose(`onebot: drop control command from ${senderId}`);
@@ -361,13 +388,14 @@ async function processInboundMessage(params: {
     ChatType: isGroup ? "group" : "direct",
     ConversationLabel: isGroup ? groupLabel : senderName,
     GroupSubject: isGroup ? groupLabel : undefined,
+    GroupSystemPrompt: groupSystemPrompt,
     SenderName: senderName,
     SenderId: senderId,
     Provider: "onebot",
     Surface: "onebot",
     MessageSid: evt.message_id != null ? String(evt.message_id) : undefined,
     Timestamp: evt.time ? evt.time * 1000 : Date.now(),
-    WasMentioned: isGroup ? extracted.wasMentioned : true,
+    WasMentioned: effectiveWasMentioned,
     CommandAuthorized: commandAuthorized,
     OriginatingChannel: "onebot" as const,
     OriginatingTo: isGroup ? `group:${groupId}` : `user:${senderId}`,
@@ -402,4 +430,3 @@ function resolveSenderName(evt: OneBotMessageEvent): string | null {
   const name = sender.card?.trim() || sender.nickname?.trim();
   return name || null;
 }
-

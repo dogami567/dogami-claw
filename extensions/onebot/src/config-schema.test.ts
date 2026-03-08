@@ -9,6 +9,7 @@ describe("onebotChannelConfigSchema", () => {
       type: "object",
       properties: expect.objectContaining({
         groups: expect.any(Object),
+        aiKp: expect.any(Object),
       }),
     });
   });

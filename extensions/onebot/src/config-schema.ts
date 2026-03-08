@@ -9,9 +9,22 @@ import { z } from "zod";
 
 const allowFromEntry = z.union([z.string(), z.number()]);
 
+export const OneBotAiKpConfigSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    storageRoot: z.string().optional(),
+    bypassMentionWhenActive: z.boolean().optional(),
+    summaryChunkLimit: z.number().int().positive().optional(),
+    recentChatLimit: z.number().int().positive().optional(),
+    recentOperationLimit: z.number().int().positive().optional(),
+    includeLogHint: z.boolean().optional(),
+  })
+  .strict();
+
 export const OneBotGroupConfigSchema = z
   .object({
     requireMention: z.boolean().optional(),
+    systemPrompt: z.string().optional(),
     tools: ToolPolicySchema.optional(),
   })
   .strict();
@@ -44,6 +57,7 @@ export const OneBotConfigSchema = z
 
     /** Group allowlist + per-group config (requireMention/tools). */
     groups: z.record(z.string(), OneBotGroupConfigSchema.optional()).optional(),
+    aiKp: OneBotAiKpConfigSchema.optional(),
   })
   .strict();
 
