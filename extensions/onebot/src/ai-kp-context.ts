@@ -117,7 +117,7 @@ export function resolveOneBotAiKpConfig(cfg: ClawdbotConfig): ResolvedOneBotAiKp
   return {
     enabled: raw.enabled !== false,
     storageRoot: raw.storageRoot?.trim() || resolveDefaultStorageRoot(cfg),
-    bypassMentionWhenActive: raw.bypassMentionWhenActive !== false,
+    bypassMentionWhenActive: raw.bypassMentionWhenActive === true,
     summaryChunkLimit: Math.max(1, Math.min(3, raw.summaryChunkLimit ?? DEFAULT_SUMMARY_CHUNK_LIMIT)),
     recentChatLimit: Math.max(1, Math.min(8, raw.recentChatLimit ?? DEFAULT_RECENT_CHAT_LIMIT)),
     recentOperationLimit: Math.max(

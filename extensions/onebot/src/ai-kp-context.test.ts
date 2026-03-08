@@ -6,7 +6,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import type { ClawdbotConfig } from "clawdbot/plugin-sdk";
 
-import { loadOneBotAiKpContext, mergeOneBotGroupSystemPrompt } from "./ai-kp-context.js";
+import {
+  loadOneBotAiKpContext,
+  mergeOneBotGroupSystemPrompt,
+  resolveOneBotAiKpConfig,
+} from "./ai-kp-context.js";
 
 const tempDirs: string[] = [];
 
@@ -157,5 +161,23 @@ describe("mergeOneBotGroupSystemPrompt", () => {
         "<onebot_ai_kp_context>new</onebot_ai_kp_context>",
       ]),
     ).toBe("Use short answers.\n\n<onebot_ai_kp_context>new</onebot_ai_kp_context>");
+  });
+});
+
+describe("resolveOneBotAiKpConfig", () => {
+  it("keeps mention bypass opt-in", () => {
+    expect(resolveOneBotAiKpConfig(buildConfig("/tmp/onebot")).bypassMentionWhenActive).toBe(false);
+    expect(
+      resolveOneBotAiKpConfig({
+        channels: {
+          onebot: {
+            aiKp: {
+              storageRoot: "/tmp/onebot",
+              bypassMentionWhenActive: true,
+            },
+          },
+        },
+      } as ClawdbotConfig).bypassMentionWhenActive,
+    ).toBe(true);
   });
 });
