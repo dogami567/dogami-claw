@@ -337,7 +337,7 @@ function buildFallbackOperationLines(context: AiKpContextPacket, limit: number):
 function buildActiveToolGuideLines(): string[] {
   return [
     `[Available Tools]`,
-    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: start/resume/pause the run, answer pending save/story-pack choices, inspect panels, move spotlight/turn order.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: start/resume/pause the run, answer pending save/story-pack choices, inspect panels, move spotlight/turn order. For freeform answers such as “接昨晚那条” or “别续旧档了”，prefer action=semantic_reply instead of asking for fixed keywords.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: create or inspect investigator sheets when the player is building a character or wants to view the current sheet.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.sceneTurn}: resolve in-world actions semantically. Prefer structured fields such as actionKind/skillKey/targetNpc/targetClue/targetArea over keyword phrases.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.history}: pull older summaries/chat/operations if compaction hid earlier context.`,
@@ -347,7 +347,7 @@ function buildActiveToolGuideLines(): string[] {
 function buildIdleToolGuideLines(): string[] {
   return [
     `[Available Tools]`,
-    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: start/resume/pause the TRPG session, pick saves/story packs, inspect status panels.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: start/resume/pause the TRPG session, pick saves/story packs, inspect status panels. Use action=semantic_reply when the player answered naturally and you should map it to resume/new-line/panel/list behavior.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: make or inspect investigator sheets.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.sceneTurn}: use only after the conversation is actually in an active TRPG scene.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.history}: read older AI-KP logs if you need compacted context.`,
@@ -395,6 +395,7 @@ function buildAiKpPromptBlock(params: {
 
   lines.push(
     `Keep the current run going naturally. Prefer taking semantic action with AI-KP tools over asking players to memorize rigid commands.`,
+    `When the player's intent is clear, do not ask them to repeat literal phrases like “续上” or “新开”; use session tools to route the meaning directly.`,
   );
   lines.push("", "[Player Context]", `Conversation key: ${params.conversationKey}`);
 
@@ -454,6 +455,7 @@ function buildIdleAiKpPromptBlock(params: {
   }
   lines.push(
     `If a tool result says a resume/new-line or story-pack choice is pending, ask that choice plainly and wait for the user's answer.`,
+    `When the user answers that pending question in natural language, use ${ONEBOT_AIKP_TOOL_NAMES.session} with action=semantic_reply instead of demanding exact words.`,
     `If the user is just discussing features, asking how AI-KP works, or chatting normally, answer without AI-KP tools.`,
     "",
     ...buildIdleToolGuideLines(),

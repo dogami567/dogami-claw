@@ -18,6 +18,7 @@ import {
   resolveOneBotAiKpBaseDir,
   resolveOneBotAiKpConfig,
 } from "./ai-kp-context.js";
+import { classifyOneBotAiKpSessionRoute } from "./ai-kp-activation.js";
 import {
   SCENE_ACTION_KINDS,
   SCENE_ACTION_MODES,
@@ -30,6 +31,7 @@ import { ONEBOT_AIKP_TOOL_NAMES } from "./ai-kp-shared.js";
 
 const SESSION_ACTIONS = [
   "status",
+  "semantic_reply",
   "start",
   "reply_to_prompt",
   "pause",
@@ -204,6 +206,7 @@ type SessionToolAction = (typeof SESSION_ACTIONS)[number];
 type PanelAction = (typeof PANEL_ACTIONS)[number];
 type RollAction = (typeof ROLL_ACTIONS)[number];
 type HistorySection = (typeof HISTORY_SECTIONS)[number];
+type RoutedSessionAction = Exclude<SessionToolAction, "status" | "semantic_reply">;
 
 function readStringArrayParam(params: Record<string, unknown>, key: string): string[] | undefined {
   const value = params[key];
@@ -599,7 +602,76 @@ function buildSessionStatus(params: {
   };
 }
 
-function sessionActionToText(action: SessionToolAction, panel: PanelAction | undefined, value?: string) {
+function mapSemanticSessionRouteToToolAction(params: {
+  action: string;
+  originalText: string;
+}): { action: RoutedSessionAction; panel?: PanelAction; value?: string } | null {
+  switch (params.action) {
+    case "start":
+      return { action: "start" };
+    case "resume":
+      return { action: "resume" };
+    case "new_line":
+      return { action: "new_line" };
+    case "pause":
+      return { action: "pause" };
+    case "reply_to_prompt":
+      return { action: "reply_to_prompt", value: params.originalText };
+    case "list_saves":
+      return { action: "list_saves" };
+    case "list_story_packs":
+      return { action: "list_story_packs" };
+    case "panel_state":
+      return { action: "panel", panel: "state" };
+    case "panel_recap":
+      return { action: "panel", panel: "recap" };
+    case "panel_party":
+      return { action: "panel", panel: "party" };
+    default:
+      return null;
+  }
+}
+
+async function resolveSemanticSessionAction(params: {
+  runtime: ConversationRuntimeContext;
+  modules: LoadedAiKpModules;
+  agentId?: string | null;
+  originalText: string;
+  senderName?: string;
+}): Promise<{
+  routed: { action: RoutedSessionAction; panel?: PanelAction; value?: string } | null;
+  decision: Awaited<ReturnType<typeof classifyOneBotAiKpSessionRoute>>;
+}> {
+  const seedEvent = buildSyntheticEvent(params.runtime, {
+    message: params.originalText,
+    rawMessage: params.originalText,
+    senderName: params.senderName,
+  });
+  const stateBundle = params.modules.singleSession.ensureConversationSession(seedEvent, {
+    storageRoot: params.runtime.aiKpConfig.storageRoot,
+  });
+  const hasExistingContext =
+    existsSync(stateBundle.layout.sessionFile) ||
+    (Array.isArray(stateBundle.meta.archiveHistory) && stateBundle.meta.archiveHistory.length > 0);
+  const decision = await classifyOneBotAiKpSessionRoute({
+    cfg: params.runtime.cfg,
+    text: params.originalText,
+    agentId: params.agentId,
+    sessionMode: typeof stateBundle.meta.sessionMode === "string" ? stateBundle.meta.sessionMode : "idle",
+    pendingResumeChoice: Boolean(stateBundle.meta.pendingResumeChoice),
+    pendingStoryPackChoice: Boolean(stateBundle.meta.pendingStoryPackChoice),
+    hasExistingContext,
+  });
+  const routed = decision
+    ? mapSemanticSessionRouteToToolAction({
+        action: decision.action,
+        originalText: params.originalText,
+      })
+    : null;
+  return { routed, decision };
+}
+
+function sessionActionToText(action: RoutedSessionAction, panel: PanelAction | undefined, value?: string) {
   switch (action) {
     case "start":
       return "/aikp start";
@@ -645,17 +717,53 @@ async function executeSessionTool(
     return jsonResult({ ...payload, contextPacket: packet?.packet ?? null });
   }
 
-  const panel = readStringParam(params, "panel") as PanelAction | undefined;
-  const value = readStringParam(params, "value");
+  const originalText = readStringParam(params, "originalText");
+  let effectiveAction = action as RoutedSessionAction | "semantic_reply";
+  let panel = readStringParam(params, "panel") as PanelAction | undefined;
+  let value = readStringParam(params, "value");
   const senderName = readStringParam(params, "senderName");
-  const message = sessionActionToText(action, panel, value);
+  let semanticResolution: Awaited<ReturnType<typeof classifyOneBotAiKpSessionRoute>> = null;
+  if (action === "semantic_reply") {
+    if (!originalText?.trim()) {
+      throw new Error("action semantic_reply requires originalText");
+    }
+    const resolved = await resolveSemanticSessionAction({
+      runtime,
+      modules,
+      agentId: ctx.agentId,
+      originalText,
+      senderName,
+    });
+    semanticResolution = resolved.decision;
+    if (!resolved.routed) {
+      const packet = await loadOneBotAiKpContextPacket({
+        cfg: runtime.cfg,
+        groupId: runtime.groupId,
+        userId: runtime.groupId ? undefined : runtime.userId,
+      });
+      return jsonResult({
+        ok: false,
+        action,
+        noSessionAction: true,
+        shouldReplyVerbatim: false,
+        replyText: null,
+        reason: semanticResolution?.reason ?? "normal_chat",
+        contextPacket: packet?.packet ?? null,
+      });
+    }
+    effectiveAction = resolved.routed.action;
+    panel = resolved.routed.panel;
+    value = resolved.routed.value;
+  }
+
+  const message = sessionActionToText(effectiveAction, panel, value);
   if (!message?.trim()) {
-    throw new Error(`action ${action} requires a value`);
+    throw new Error(`action ${effectiveAction} requires a value`);
   }
 
   const event = buildSyntheticEvent(runtime, {
     message,
-    rawMessage: readStringParam(params, "originalText") ?? message,
+    rawMessage: originalText ?? message,
     senderName,
   });
   const result = modules.singleSession.handleOneBotMessage(event, buildToolRuntimeOptions(runtime.aiKpConfig));
@@ -671,6 +779,9 @@ async function executeSessionTool(
       extra: {
         reason: result.reason ?? null,
         usedMessage: message,
+        routedAction: effectiveAction,
+        routedPanel: panel ?? null,
+        semanticResolution,
       },
     }),
   );
@@ -1008,7 +1119,7 @@ export function createOneBotAiKpTools(api: ClawdbotPluginApi, ctx: ClawdbotPlugi
     {
       name: ONEBOT_AIKP_TOOL_NAMES.session,
       description:
-        "Control AI-KP session state in OneBot QQ conversations. Use this when a user clearly wants to start, resume, pause, pick a story pack, inspect status/panels, or answer a pending resume/story-pack choice. If the user is just discussing AI-KP or asking general questions, do not call it.",
+        "Control AI-KP session state in OneBot QQ conversations. Use this when a user clearly wants to start, resume, pause, pick a story pack, inspect status/panels, or answer a pending resume/story-pack choice. Prefer action=semantic_reply when the user answered in natural language and you should infer the session-control meaning without forcing fixed phrases. If the user is just discussing AI-KP or asking general questions, do not call it.",
       parameters: Type.Object({
         action: stringEnum(SESSION_ACTIONS, { description: `Action to perform: ${SESSION_ACTIONS.join(", ")}` }),
         panel: Type.Optional(
@@ -1020,7 +1131,10 @@ export function createOneBotAiKpTools(api: ClawdbotPluginApi, ctx: ClawdbotPlugi
           Type.String({ description: "Optional value for actions like select_story_pack, resume, or focus." }),
         ),
         originalText: Type.Optional(
-          Type.String({ description: "The user's original message, for prompt replies or better routing/logging." }),
+          Type.String({
+            description:
+              "The user's original message. Required for action=semantic_reply and useful for reply_to_prompt or better routing/logging.",
+          }),
         ),
         senderName: Type.Optional(
           Type.String({ description: "Optional player display name from the current OneBot message." }),

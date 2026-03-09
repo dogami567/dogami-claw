@@ -130,6 +130,8 @@ describe("loadOneBotAiKpContext", () => {
     expect(result?.promptBlock).toContain("Context file:");
     expect(result?.promptBlock).toContain("onebot_aikp_scene_turn");
     expect(result?.promptBlock).toContain("onebot_aikp_history");
+    expect(result?.promptBlock).toContain("action=semantic_reply");
+    expect(result?.promptBlock).toContain("续上");
     expect(result?.promptBlock).not.toContain("[Raw Log Paths]");
   });
 
@@ -159,6 +161,7 @@ describe("loadOneBotAiKpContext", () => {
     expect(result?.promptBlock).toContain("TRPG session is currently idle");
     expect(result?.promptBlock).toContain("onebot_aikp_session");
     expect(result?.promptBlock).toContain("onebot_aikp_roll");
+    expect(result?.promptBlock).toContain("action=semantic_reply");
   });
 });
 

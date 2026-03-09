@@ -22,6 +22,25 @@ export type OneBotAiKpActivationDecision = {
   reason: string;
 };
 
+export type OneBotAiKpSessionRouteIntent =
+  | "normal"
+  | "start"
+  | "resume"
+  | "new_line"
+  | "pause"
+  | "reply_to_prompt"
+  | "list_saves"
+  | "list_story_packs"
+  | "panel_state"
+  | "panel_recap"
+  | "panel_party";
+
+export type OneBotAiKpSessionRouteDecision = {
+  action: OneBotAiKpSessionRouteIntent;
+  confidence: number;
+  reason: string;
+};
+
 const VALID_ACTIONS = new Set<OneBotAiKpActivationIntent>([
   "normal",
   "start",
@@ -29,6 +48,20 @@ const VALID_ACTIONS = new Set<OneBotAiKpActivationIntent>([
   "new",
   "exit",
   "roll",
+]);
+
+const VALID_SESSION_ROUTE_ACTIONS = new Set<OneBotAiKpSessionRouteIntent>([
+  "normal",
+  "start",
+  "resume",
+  "new_line",
+  "pause",
+  "reply_to_prompt",
+  "list_saves",
+  "list_story_packs",
+  "panel_state",
+  "panel_recap",
+  "panel_party",
 ]);
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -141,6 +174,77 @@ function validateDecision(raw: unknown): OneBotAiKpActivationDecision | null {
   };
 }
 
+function validateSessionRouteDecision(raw: unknown): OneBotAiKpSessionRouteDecision | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const action = String((raw as { action?: unknown }).action ?? "").trim() as OneBotAiKpSessionRouteIntent;
+  if (!VALID_SESSION_ROUTE_ACTIONS.has(action)) return null;
+  return {
+    action,
+    confidence: clampConfidence((raw as { confidence?: unknown }).confidence),
+    reason: String((raw as { reason?: unknown }).reason ?? "").trim(),
+  };
+}
+
+async function runJsonRouter<TDecision>(params: {
+  cfg: ClawdbotConfig;
+  agentId?: string | null;
+  onError?: (message: string) => void;
+  prompt: string;
+  input: Record<string, unknown>;
+  validate: (raw: unknown) => TDecision | null;
+  errorLabel: string;
+}): Promise<TDecision | null> {
+  const resolved = resolveActivationModel({
+    cfg: params.cfg,
+    agentId: params.agentId,
+  });
+  if (!resolved.provider || !resolved.model) {
+    params.onError?.(`onebot ai-kp: ${params.errorLabel} skipped (provider/model unresolved)`);
+    return null;
+  }
+
+  let tempDir: string | null = null;
+  try {
+    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "onebot-aikp-router-"));
+    const sessionId = `onebot-aikp-router-${Date.now()}`;
+    const sessionFile = path.join(tempDir, "session.json");
+    const runEmbeddedPiAgent = await loadRunEmbeddedPiAgent();
+    const result = await runEmbeddedPiAgent({
+      sessionId,
+      sessionFile,
+      workspaceDir: params.cfg.agents?.defaults?.workspace ?? process.cwd(),
+      config: params.cfg,
+      prompt: `${params.prompt}\n\nINPUT_JSON:\n${JSON.stringify(params.input, null, 2)}\n`,
+      timeoutMs: resolved.timeoutMs,
+      runId: `onebot-aikp-router-${Date.now()}`,
+      provider: resolved.provider,
+      model: resolved.model,
+      authProfileId: resolved.authProfileId,
+      authProfileIdSource: resolved.authProfileId ? "user" : "auto",
+      disableTools: true,
+      thinkLevel: "minimal",
+      verboseLevel: "off",
+      reasoningLevel: "off",
+      streamParams: {
+        temperature: 0,
+        maxTokens: resolved.maxTokens,
+      },
+    });
+
+    const textOutput = collectText((result as { payloads?: Array<{ text?: string; isError?: boolean }> }).payloads);
+    if (!textOutput) return null;
+    const parsed = JSON.parse(stripCodeFences(textOutput)) as unknown;
+    return params.validate(parsed);
+  } catch (error) {
+    params.onError?.(`onebot ai-kp: ${params.errorLabel} failed: ${String(error)}`);
+    return null;
+  } finally {
+    if (tempDir) {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+}
+
 export async function classifyOneBotAiKpActivation(params: {
   cfg: ClawdbotConfig;
   text: string;
@@ -153,15 +257,6 @@ export async function classifyOneBotAiKpActivation(params: {
 
   const text = params.text.trim();
   if (!text) return null;
-
-  const resolved = resolveActivationModel({
-    cfg: params.cfg,
-    agentId: params.agentId,
-  });
-  if (!resolved.provider || !resolved.model) {
-    params.onError?.("onebot ai-kp: activation router skipped (provider/model unresolved)");
-    return null;
-  }
 
   const prompt = [
     "你是 QQ 机器人“麦麦”的模式路由器，只负责判断这条消息要不要切进 AI-KP 跑团模式。",
@@ -190,45 +285,77 @@ export async function classifyOneBotAiKpActivation(params: {
     channel: "onebot-group",
     currentMode: "idle",
   };
+  return await runJsonRouter({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    onError: params.onError,
+    prompt,
+    input,
+    validate: validateDecision,
+    errorLabel: "activation router",
+  });
+}
 
-  let tempDir: string | null = null;
-  try {
-    tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "onebot-aikp-router-"));
-    const sessionId = `onebot-aikp-router-${Date.now()}`;
-    const sessionFile = path.join(tempDir, "session.json");
-    const runEmbeddedPiAgent = await loadRunEmbeddedPiAgent();
-    const result = await runEmbeddedPiAgent({
-      sessionId,
-      sessionFile,
-      workspaceDir: params.cfg.agents?.defaults?.workspace ?? process.cwd(),
-      config: params.cfg,
-      prompt: `${prompt}\n\nINPUT_JSON:\n${JSON.stringify(input, null, 2)}\n`,
-      timeoutMs: resolved.timeoutMs,
-      runId: `onebot-aikp-router-${Date.now()}`,
-      provider: resolved.provider,
-      model: resolved.model,
-      authProfileId: resolved.authProfileId,
-      authProfileIdSource: resolved.authProfileId ? "user" : "auto",
-      disableTools: true,
-      thinkLevel: "minimal",
-      verboseLevel: "off",
-      reasoningLevel: "off",
-      streamParams: {
-        temperature: 0,
-        maxTokens: resolved.maxTokens,
-      },
-    });
+export async function classifyOneBotAiKpSessionRoute(params: {
+  cfg: ClawdbotConfig;
+  text: string;
+  agentId?: string | null;
+  sessionMode?: string | null;
+  pendingResumeChoice?: boolean;
+  pendingStoryPackChoice?: boolean;
+  hasExistingContext?: boolean;
+  onError?: (message: string) => void;
+}): Promise<OneBotAiKpSessionRouteDecision | null> {
+  const config = resolveOneBotAiKpConfig(params.cfg);
+  if (!config.activationRouterEnabled) return null;
 
-    const textOutput = collectText((result as { payloads?: Array<{ text?: string; isError?: boolean }> }).payloads);
-    if (!textOutput) return null;
-    const parsed = JSON.parse(stripCodeFences(textOutput)) as unknown;
-    return validateDecision(parsed);
-  } catch (error) {
-    params.onError?.(`onebot ai-kp: activation router failed: ${String(error)}`);
-    return null;
-  } finally {
-    if (tempDir) {
-      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
-    }
-  }
+  const text = params.text.trim();
+  if (!text) return null;
+
+  const prompt = [
+    "你是 QQ 机器人“麦麦”的 AI-KP 会话路由器，只判断这句自然语言在跑团会话里应该触发什么会话动作。",
+    '你必须只返回一个 JSON 对象：{"action":"normal|start|resume|new_line|pause|reply_to_prompt|list_saves|list_story_packs|panel_state|panel_recap|panel_party","confidence":0..1,"reason":"简短中文说明"}。',
+    "不要要求用户复述固定口令，要按真实语义判断。",
+    "动作含义：",
+    "start：明确要开始跑团/开团/进团。",
+    "resume：明确要接回旧档、继续昨晚/上次那条线。",
+    "new_line：明确不要旧档，要新开一条。",
+    "pause：明确要退出跑团、收团、回普通聊天。",
+    "reply_to_prompt：用户是在自然回答当前会话里的开放问题，应该把原话交给下游继续处理；尤其适合回答“你想跑哪个剧本/模组”。",
+    "list_saves：用户要看旧档/存档列表。",
+    "list_story_packs：用户要看剧本/模组列表。",
+    "panel_state：用户要看当前状态/现在什么情况。",
+    "panel_recap：用户要你回顾、总结一下目前剧情。",
+    "panel_party：用户要看队伍、谁在场、当前角色情况。",
+    "normal：普通聊天、功能讨论、问配置、问怎么用，不该走 AI-KP 会话动作。",
+    "如果 pendingResumeChoice=true，优先在 resume / new_line / list_saves 之间判断；只有用户确实没表态，才选 reply_to_prompt。",
+    "如果 pendingStoryPackChoice=true，用户在说想跑哪个剧本、模组名、'就那个第一个' 之类时，优先选 reply_to_prompt；如果是在要列表，再选 list_story_packs。",
+    "如果用户只是说 '好'、'行'、'继续' 但没有足够信息，选 reply_to_prompt，不要乱猜。",
+    "示例：",
+    "- “把昨晚那条接回来” => resume",
+    "- “别续旧档，重新开吧” => new_line",
+    "- “先让我看看有哪些存档” => list_saves",
+    "- “旧教堂那个就行” => reply_to_prompt",
+    "- “现在什么情况” => panel_state",
+    "- “总结一下刚才发生了什么” => panel_recap",
+    "- “现在谁在场” => panel_party",
+    "- “你这功能怎么配” => normal",
+  ].join(" ");
+
+  return await runJsonRouter({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    onError: params.onError,
+    prompt,
+    input: {
+      text,
+      sessionMode: params.sessionMode ?? "idle",
+      pendingResumeChoice: params.pendingResumeChoice === true,
+      pendingStoryPackChoice: params.pendingStoryPackChoice === true,
+      hasExistingContext: params.hasExistingContext === true,
+      channel: "onebot-session-tool",
+    },
+    validate: validateSessionRouteDecision,
+    errorLabel: "session router",
+  });
 }
