@@ -18,7 +18,10 @@ import {
   resolveOneBotAiKpBaseDir,
   resolveOneBotAiKpConfig,
 } from "./ai-kp-context.js";
-import { classifyOneBotAiKpSessionRoute } from "./ai-kp-activation.js";
+import {
+  classifyOneBotAiKpRollRoute,
+  classifyOneBotAiKpSessionRoute,
+} from "./ai-kp-activation.js";
 import {
   SCENE_ACTION_KINDS,
   SCENE_ACTION_MODES,
@@ -64,6 +67,7 @@ const ROLL_ACTIONS = [
   "party_traditional",
   "party_quickfire",
   "sheet",
+  "semantic_reply",
 ] as const;
 
 const HISTORY_SECTIONS = ["summary", "chat", "operations", "all"] as const;
@@ -149,6 +153,7 @@ type SingleSessionModule = {
 
 type CoreModule = {
   submitAction: (...args: unknown[]) => unknown;
+  listOccupationTemplates?: () => Array<{ key?: string; name?: string }>;
   processScenarioTurn: (
     sessionState: Record<string, any>,
     actorId: string,
@@ -207,6 +212,7 @@ type PanelAction = (typeof PANEL_ACTIONS)[number];
 type RollAction = (typeof ROLL_ACTIONS)[number];
 type HistorySection = (typeof HISTORY_SECTIONS)[number];
 type RoutedSessionAction = Exclude<SessionToolAction, "status" | "semantic_reply">;
+type RoutedRollAction = Exclude<RollAction, "semantic_reply">;
 
 function readStringArrayParam(params: Record<string, unknown>, key: string): string[] | undefined {
   const value = params[key];
@@ -671,6 +677,79 @@ async function resolveSemanticSessionAction(params: {
   return { routed, decision };
 }
 
+function listOccupationOptions(modules: LoadedAiKpModules): Array<{ key: string; name?: string | null }> {
+  const templates = typeof modules.core.listOccupationTemplates === "function"
+    ? modules.core.listOccupationTemplates()
+    : [];
+  return templates
+    .map((entry) => {
+      const key = typeof entry?.key === "string" ? entry.key.trim() : "";
+      if (!key) return null;
+      const name = typeof entry?.name === "string" ? entry.name.trim() : null;
+      return { key, name };
+    })
+    .filter((entry): entry is { key: string; name?: string | null } => Boolean(entry));
+}
+
+function mapSemanticRollRouteToToolAction(params: {
+  action: string;
+  occupationKey?: string;
+}): { action: RoutedRollAction; occupationKey?: string } | null {
+  switch (params.action) {
+    case "traditional":
+      return { action: "traditional", occupationKey: params.occupationKey };
+    case "quickfire":
+      return { action: "quickfire", occupationKey: params.occupationKey };
+    case "party_traditional":
+      return { action: "party_traditional", occupationKey: params.occupationKey };
+    case "party_quickfire":
+      return { action: "party_quickfire", occupationKey: params.occupationKey };
+    case "sheet":
+      return { action: "sheet" };
+    default:
+      return null;
+  }
+}
+
+async function resolveSemanticRollAction(params: {
+  runtime: ConversationRuntimeContext;
+  modules: LoadedAiKpModules;
+  agentId?: string | null;
+  originalText: string;
+  senderName?: string;
+}): Promise<{
+  routed: { action: RoutedRollAction; occupationKey?: string } | null;
+  decision: Awaited<ReturnType<typeof classifyOneBotAiKpRollRoute>>;
+}> {
+  const seedEvent = buildSyntheticEvent(params.runtime, {
+    message: params.originalText,
+    rawMessage: params.originalText,
+    senderName: params.senderName,
+  });
+  const stateBundle = params.modules.singleSession.ensureConversationSession(seedEvent, {
+    storageRoot: params.runtime.aiKpConfig.storageRoot,
+  });
+  const occupationOptions = listOccupationOptions(params.modules);
+  const actorId = stateBundle.meta.actorsByUserId?.[params.runtime.userId] as string | undefined;
+  const knownPlayerCount = Array.isArray(stateBundle.meta.knownUsers) ? stateBundle.meta.knownUsers.length : 1;
+  const decision = await classifyOneBotAiKpRollRoute({
+    cfg: params.runtime.cfg,
+    text: params.originalText,
+    occupationOptions,
+    agentId: params.agentId,
+    sessionMode: typeof stateBundle.meta.sessionMode === "string" ? stateBundle.meta.sessionMode : "idle",
+    hasCurrentInvestigator: Boolean(actorId && stateBundle.sessionState.investigators?.[actorId]),
+    knownPlayerCount,
+  });
+  const routed = decision
+    ? mapSemanticRollRouteToToolAction({
+        action: decision.action,
+        occupationKey: decision.occupationKey,
+      })
+    : null;
+  return { routed, decision };
+}
+
 function sessionActionToText(action: RoutedSessionAction, panel: PanelAction | undefined, value?: string) {
   switch (action) {
     case "start":
@@ -795,10 +874,46 @@ async function executeRollTool(
   const runtime = await resolveConversationRuntimeContext(api, ctx);
   const modules = loadAiKpModules(runtime.cfg);
   const action = readStringParam(params, "action", { required: true }) as RollAction;
-  const occupationKey = readStringParam(params, "occupationKey");
+  const originalText = readStringParam(params, "originalText");
+  let occupationKey = readStringParam(params, "occupationKey");
   const senderName = readStringParam(params, "senderName");
+  let effectiveAction = action as RoutedRollAction | "semantic_reply";
+  let semanticResolution: Awaited<ReturnType<typeof classifyOneBotAiKpRollRoute>> = null;
+  if (action === "semantic_reply") {
+    if (!originalText?.trim()) {
+      throw new Error("action semantic_reply requires originalText");
+    }
+    const resolved = await resolveSemanticRollAction({
+      runtime,
+      modules,
+      agentId: ctx.agentId,
+      originalText,
+      senderName,
+    });
+    semanticResolution = resolved.decision;
+    if (!resolved.routed) {
+      const packet = await loadOneBotAiKpContextPacket({
+        cfg: runtime.cfg,
+        groupId: runtime.groupId,
+        userId: runtime.groupId ? undefined : runtime.userId,
+      });
+      return jsonResult({
+        ok: false,
+        action,
+        noRollAction: true,
+        shouldReplyVerbatim: false,
+        replyText: null,
+        reason: semanticResolution?.reason ?? "normal_chat",
+        semanticResolution,
+        contextPacket: packet?.packet ?? null,
+      });
+    }
+    effectiveAction = resolved.routed.action;
+    occupationKey = resolved.routed.occupationKey ?? occupationKey;
+  }
+
   let message: string;
-  switch (action) {
+  switch (effectiveAction) {
     case "traditional":
       message = `/aikp roll ${occupationKey ?? "journalist"}`;
       break;
@@ -819,7 +934,7 @@ async function executeRollTool(
   }
   const event = buildSyntheticEvent(runtime, {
     message,
-    rawMessage: readStringParam(params, "originalText") ?? message,
+    rawMessage: originalText ?? message,
     senderName,
   });
   const result = modules.singleSession.handleOneBotMessage(event, buildToolRuntimeOptions(runtime.aiKpConfig));
@@ -833,7 +948,13 @@ async function executeRollTool(
       shouldReplyVerbatim: true,
       packet: result.contextPacket ?? null,
       extra: {
-        occupationKey: occupationKey ?? null,
+        occupationKey:
+          effectiveAction === "sheet"
+            ? null
+            : occupationKey ?? "journalist",
+        usedMessage: message,
+        routedAction: effectiveAction,
+        semanticResolution,
       },
     }),
   );
@@ -1145,16 +1266,21 @@ export function createOneBotAiKpTools(api: ClawdbotPluginApi, ctx: ClawdbotPlugi
     {
       name: ONEBOT_AIKP_TOOL_NAMES.roll,
       description:
-        "Create or inspect investigator sheets in OneBot AI-KP conversations. Use this when the user wants to roll a traditional card, quickfire a card, batch-generate party cards, or view their sheet.",
+        "Create or inspect investigator sheets in OneBot AI-KP conversations. Use this when the user wants to roll a traditional card, quickfire a card, batch-generate party cards, inspect their sheet, or answer a blocked chargen step naturally. Prefer action=semantic_reply when the player only names an occupation, asks for quick/traditional/party chargen in freeform language, or says they want to see the current sheet without fixed commands.",
       parameters: Type.Object({
         action: stringEnum(ROLL_ACTIONS, { description: `Action to perform: ${ROLL_ACTIONS.join(", ")}` }),
         occupationKey: Type.Optional(
           Type.String({
             description:
-              "Occupation key such as journalist, detective, doctor, professor, artist, veteran, or dilettante.",
+              "Optional explicit occupation key such as journalist, detective, doctor, professor, artist, veteran, or dilettante. semantic_reply can infer this automatically.",
+            }),
+        ),
+        originalText: Type.Optional(
+          Type.String({
+            description:
+              "The user's original message. Required for action=semantic_reply and useful for better routing/logging.",
           }),
         ),
-        originalText: Type.Optional(Type.String({ description: "The user's original message." })),
         senderName: Type.Optional(
           Type.String({ description: "Optional player display name from the current OneBot message." }),
         ),

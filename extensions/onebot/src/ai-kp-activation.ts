@@ -41,6 +41,21 @@ export type OneBotAiKpSessionRouteDecision = {
   reason: string;
 };
 
+export type OneBotAiKpRollRouteIntent =
+  | "normal"
+  | "traditional"
+  | "quickfire"
+  | "party_traditional"
+  | "party_quickfire"
+  | "sheet";
+
+export type OneBotAiKpRollRouteDecision = {
+  action: OneBotAiKpRollRouteIntent;
+  confidence: number;
+  reason: string;
+  occupationKey?: string;
+};
+
 const VALID_ACTIONS = new Set<OneBotAiKpActivationIntent>([
   "normal",
   "start",
@@ -62,6 +77,15 @@ const VALID_SESSION_ROUTE_ACTIONS = new Set<OneBotAiKpSessionRouteIntent>([
   "panel_state",
   "panel_recap",
   "panel_party",
+]);
+
+const VALID_ROLL_ROUTE_ACTIONS = new Set<OneBotAiKpRollRouteIntent>([
+  "normal",
+  "traditional",
+  "quickfire",
+  "party_traditional",
+  "party_quickfire",
+  "sheet",
 ]);
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -182,6 +206,19 @@ function validateSessionRouteDecision(raw: unknown): OneBotAiKpSessionRouteDecis
     action,
     confidence: clampConfidence((raw as { confidence?: unknown }).confidence),
     reason: String((raw as { reason?: unknown }).reason ?? "").trim(),
+  };
+}
+
+function validateRollRouteDecision(raw: unknown): OneBotAiKpRollRouteDecision | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const action = String((raw as { action?: unknown }).action ?? "").trim() as OneBotAiKpRollRouteIntent;
+  if (!VALID_ROLL_ROUTE_ACTIONS.has(action)) return null;
+  const occupationKey = String((raw as { occupationKey?: unknown }).occupationKey ?? "").trim() || undefined;
+  return {
+    action,
+    confidence: clampConfidence((raw as { confidence?: unknown }).confidence),
+    reason: String((raw as { reason?: unknown }).reason ?? "").trim(),
+    occupationKey,
   };
 }
 
@@ -357,5 +394,81 @@ export async function classifyOneBotAiKpSessionRoute(params: {
     },
     validate: validateSessionRouteDecision,
     errorLabel: "session router",
+  });
+}
+
+export async function classifyOneBotAiKpRollRoute(params: {
+  cfg: ClawdbotConfig;
+  text: string;
+  occupationOptions: Array<{ key: string; name?: string | null }>;
+  agentId?: string | null;
+  sessionMode?: string | null;
+  hasCurrentInvestigator?: boolean;
+  knownPlayerCount?: number;
+  onError?: (message: string) => void;
+}): Promise<OneBotAiKpRollRouteDecision | null> {
+  const config = resolveOneBotAiKpConfig(params.cfg);
+  if (!config.activationRouterEnabled) return null;
+
+  const text = params.text.trim();
+  if (!text) return null;
+
+  const occupationList = params.occupationOptions
+    .map((entry) => `${entry.key}${entry.name ? `(${entry.name})` : ""}`)
+    .join(", ");
+
+  const prompt = [
+    "你是 QQ 机器人“麦麦”的 AI-KP 建卡路由器，只判断这句自然语言在调查员建卡/查看卡片环节应该触发什么动作。",
+    '你必须只返回一个 JSON 对象：{"action":"normal|traditional|quickfire|party_traditional|party_quickfire|sheet","confidence":0..1,"reason":"简短中文说明","occupationKey":"可选职业key"}。',
+    "不要要求用户复述固定命令，要按真实语义判断。",
+    "动作含义：",
+    "traditional：普通单人传统车卡。",
+    "quickfire：普通单人快速车卡。",
+    "party_traditional：多人一起传统车卡。",
+    "party_quickfire：多人一起快速车卡。",
+    "sheet：用户想查看自己当前的人物卡/调查员卡。",
+    "normal：这句不是建卡/看卡动作。",
+    "如果用户只是回答一个职业，例如“记者吧”“医生”，默认判成 traditional，并给出对应 occupationKey。",
+    "如果用户提到“快速”“快车卡”，优先 quickfire / party_quickfire。",
+    "如果用户提到“大家一起”“全员”“一次全车”，优先 party_traditional / party_quickfire。",
+    "如果用户是在要看当前角色卡、调查员卡、人物卡，选 sheet。",
+    "occupationKey 必须尽量从允许列表里选；如果没有明确职业，可以留空。",
+    `允许职业：${occupationList}`,
+    "示例：",
+    '- “记者吧” => traditional + journalist',
+    '- “给我快速医生卡” => quickfire + doctor',
+    '- “大家一起快速车卡，职业侦探” => party_quickfire + detective',
+    '- “我看看我现在的人物卡” => sheet',
+    '- “你这套建卡怎么做的” => normal',
+  ].join(" ");
+
+  return await runJsonRouter({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    onError: params.onError,
+    prompt,
+    input: {
+      text,
+      sessionMode: params.sessionMode ?? "idle",
+      hasCurrentInvestigator: params.hasCurrentInvestigator === true,
+      knownPlayerCount: typeof params.knownPlayerCount === "number" ? params.knownPlayerCount : 1,
+      occupationOptions: params.occupationOptions,
+      channel: "onebot-roll-tool",
+    },
+    validate: (raw) => {
+      const parsed = validateRollRouteDecision(raw);
+      if (!parsed) return null;
+      if (parsed.occupationKey) {
+        const allowed = new Set(params.occupationOptions.map((entry) => entry.key));
+        if (!allowed.has(parsed.occupationKey)) {
+          return {
+            ...parsed,
+            occupationKey: undefined,
+          };
+        }
+      }
+      return parsed;
+    },
+    errorLabel: "roll router",
   });
 }

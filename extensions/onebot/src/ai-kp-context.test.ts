@@ -134,6 +134,7 @@ describe("loadOneBotAiKpContext", () => {
     expect(result?.promptBlock).toContain("onebot_aikp_history");
     expect(result?.promptBlock).toContain("action=semantic_reply");
     expect(result?.promptBlock).toContain("续上");
+    expect(result?.promptBlock).toContain("记者吧");
     expect(result?.promptBlock).not.toContain("[Raw Log Paths]");
   });
 
@@ -170,6 +171,7 @@ describe("loadOneBotAiKpContext", () => {
     expect(result?.promptBlock).toContain("onebot_aikp_session");
     expect(result?.promptBlock).toContain("onebot_aikp_roll");
     expect(result?.promptBlock).toContain("action=semantic_reply");
+    expect(result?.promptBlock).toContain("chargen step");
   });
 });
 
