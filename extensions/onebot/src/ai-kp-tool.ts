@@ -467,6 +467,11 @@ function buildStateSnapshot(stateBundle: StateBundle): Record<string, unknown> {
   const currentActor = turnState.currentActorId
     ? stateBundle.sessionState.investigators?.[turnState.currentActorId]
     : null;
+  const pendingDraft =
+    stateBundle.meta.pendingInvestigatorDraft &&
+    typeof stateBundle.meta.pendingInvestigatorDraft === "object"
+      ? (stateBundle.meta.pendingInvestigatorDraft as Record<string, any>)
+      : null;
   return {
     updatedAt: new Date().toISOString(),
     conversationKey: stateBundle.layout.conversationKey,
@@ -480,6 +485,22 @@ function buildStateSnapshot(stateBundle: StateBundle): Record<string, unknown> {
       currentActorName: currentActor?.name || null,
       round: turnState.round,
     },
+    pendingInvestigatorDraft: pendingDraft
+      ? {
+          stage:
+            typeof pendingDraft.stage === "string" && pendingDraft.stage.trim()
+              ? pendingDraft.stage.trim()
+              : null,
+          occupationKey:
+            typeof pendingDraft.occupationKey === "string" && pendingDraft.occupationKey.trim()
+              ? pendingDraft.occupationKey.trim()
+              : null,
+          occupationName:
+            typeof pendingDraft.occupationName === "string" && pendingDraft.occupationName.trim()
+              ? pendingDraft.occupationName.trim()
+              : null,
+        }
+      : null,
     revealedClues: (stateBundle.sessionState.scene?.clues || [])
       .filter((item: Record<string, any>) => item.revealed)
       .map((item: Record<string, any>) => item.title),
@@ -592,6 +613,15 @@ function buildSessionStatus(params: {
   if (meta.pendingStoryPackChoice) {
     replyLines.push("当前待确认：选择剧本");
   }
+  if (meta.pendingInvestigatorDraft?.stage) {
+    replyLines.push(
+      `当前待确认：建卡 ${String(meta.pendingInvestigatorDraft.stage)} 阶段${
+        meta.pendingInvestigatorDraft.occupationName || meta.pendingInvestigatorDraft.occupationKey
+          ? `（${meta.pendingInvestigatorDraft.occupationName || meta.pendingInvestigatorDraft.occupationKey}）`
+          : ""
+      }`,
+    );
+  }
   if (meta.storyPackId) {
     replyLines.push(`当前剧本：${meta.storyPackId}`);
   }
@@ -614,6 +644,7 @@ function buildSessionStatus(params: {
     shouldReplyVerbatim: false,
     pendingResumeChoice: meta.pendingResumeChoice ?? null,
     pendingStoryPackChoice: meta.pendingStoryPackChoice ?? null,
+    pendingInvestigatorDraft: meta.pendingInvestigatorDraft ?? null,
     storyPackId: meta.storyPackId ?? null,
   };
 }
@@ -833,6 +864,11 @@ async function resolveSemanticDispatchDecision(params: {
   });
   const actorId = stateBundle.meta.actorsByUserId?.[params.runtime.userId] as string | undefined;
   const investigator = actorId ? stateBundle.sessionState.investigators?.[actorId] as Record<string, any> | undefined : undefined;
+  const pendingDraft =
+    stateBundle.meta.pendingInvestigatorDraft &&
+    typeof stateBundle.meta.pendingInvestigatorDraft === "object"
+      ? (stateBundle.meta.pendingInvestigatorDraft as Record<string, any>)
+      : null;
   const decision = await classifyOneBotAiKpDispatchRoute({
     cfg: params.runtime.cfg,
     text: params.originalText,
@@ -844,6 +880,10 @@ async function resolveSemanticDispatchDecision(params: {
     selectedStoryPackId: typeof stateBundle.meta.storyPackId === "string" ? stateBundle.meta.storyPackId : null,
     pendingResumeChoice: Boolean(stateBundle.meta.pendingResumeChoice),
     pendingStoryPackChoice: Boolean(stateBundle.meta.pendingStoryPackChoice),
+    pendingInvestigatorDraftStage:
+      typeof pendingDraft?.stage === "string" ? pendingDraft.stage : null,
+    pendingInvestigatorDraftOccupationKey:
+      typeof pendingDraft?.occupationKey === "string" ? pendingDraft.occupationKey : null,
     hasCurrentInvestigator: Boolean(investigator),
     currentInvestigatorName: typeof investigator?.name === "string" ? investigator.name : null,
     currentInvestigatorOccupation: typeof investigator?.occupation === "string" ? investigator.occupation : null,
@@ -889,6 +929,7 @@ async function resolveSemanticRollAction(params: {
 }): Promise<{
   routed: { action: RoutedRollAction; occupationKey?: string } | null;
   decision: Awaited<ReturnType<typeof classifyOneBotAiKpRollRoute>>;
+  stateBundle: StateBundle;
 }> {
   const seedEvent = buildSyntheticEvent(params.runtime, {
     message: params.originalText,
@@ -901,6 +942,11 @@ async function resolveSemanticRollAction(params: {
   const occupationOptions = listOccupationOptions(params.modules);
   const actorId = stateBundle.meta.actorsByUserId?.[params.runtime.userId] as string | undefined;
   const knownPlayerCount = Array.isArray(stateBundle.meta.knownUsers) ? stateBundle.meta.knownUsers.length : 1;
+  const pendingDraft =
+    stateBundle.meta.pendingInvestigatorDraft &&
+    typeof stateBundle.meta.pendingInvestigatorDraft === "object"
+      ? (stateBundle.meta.pendingInvestigatorDraft as Record<string, any>)
+      : null;
   const decision = await classifyOneBotAiKpRollRoute({
     cfg: params.runtime.cfg,
     text: params.originalText,
@@ -908,6 +954,10 @@ async function resolveSemanticRollAction(params: {
     agentId: params.agentId,
     sessionMode: typeof stateBundle.meta.sessionMode === "string" ? stateBundle.meta.sessionMode : "idle",
     hasCurrentInvestigator: Boolean(actorId && stateBundle.sessionState.investigators?.[actorId]),
+    pendingInvestigatorDraftStage:
+      typeof pendingDraft?.stage === "string" ? pendingDraft.stage : null,
+    pendingInvestigatorDraftOccupationKey:
+      typeof pendingDraft?.occupationKey === "string" ? pendingDraft.occupationKey : null,
     knownPlayerCount,
   });
   const routed = decision
@@ -916,7 +966,7 @@ async function resolveSemanticRollAction(params: {
         occupationKey: decision.occupationKey,
       })
     : null;
-  return { routed, decision };
+  return { routed, decision, stateBundle };
 }
 
 function sessionActionToText(action: RoutedSessionAction, panel: PanelAction | undefined, value?: string) {
@@ -1046,6 +1096,14 @@ async function executeRollTool(
   const originalText = readStringParam(params, "originalText");
   let occupationKey = readStringParam(params, "occupationKey");
   const senderName = readStringParam(params, "senderName");
+  const seedEvent = buildSyntheticEvent(runtime, {
+    message: originalText ?? "roll",
+    rawMessage: originalText ?? "roll",
+    senderName,
+  });
+  let stateBundle = modules.singleSession.ensureConversationSession(seedEvent, {
+    storageRoot: runtime.aiKpConfig.storageRoot,
+  });
   let effectiveAction = action as RoutedRollAction | "semantic_reply";
   let semanticResolution: Awaited<ReturnType<typeof classifyOneBotAiKpRollRoute>> = null;
   if (action === "semantic_reply") {
@@ -1060,6 +1118,7 @@ async function executeRollTool(
       senderName,
     });
     semanticResolution = resolved.decision;
+    stateBundle = resolved.stateBundle;
     if (!resolved.routed) {
       const packet = await loadOneBotAiKpContextPacket({
         cfg: runtime.cfg,
@@ -1081,10 +1140,22 @@ async function executeRollTool(
     occupationKey = resolved.routed.occupationKey ?? occupationKey;
   }
 
+  const pendingDraft =
+    stateBundle.meta.pendingInvestigatorDraft &&
+    typeof stateBundle.meta.pendingInvestigatorDraft === "object"
+      ? (stateBundle.meta.pendingInvestigatorDraft as Record<string, any>)
+      : null;
+  const shouldPassThroughOriginalText =
+    Boolean(originalText?.trim()) &&
+    Boolean(pendingDraft?.stage) &&
+    effectiveAction === "traditional";
+
   let message: string;
   switch (effectiveAction) {
     case "traditional":
-      message = `/aikp roll ${occupationKey ?? "journalist"}`;
+      message = shouldPassThroughOriginalText
+        ? originalText!.trim()
+        : `/aikp roll ${occupationKey ?? "journalist"}`;
       break;
     case "quickfire":
       message = `/aikp quickfire ${occupationKey ?? "journalist"}`;
@@ -1120,7 +1191,8 @@ async function executeRollTool(
         occupationKey:
           effectiveAction === "sheet"
             ? null
-            : occupationKey ?? "journalist",
+            : occupationKey ??
+              (typeof pendingDraft?.occupationKey === "string" ? pendingDraft.occupationKey : null),
         usedMessage: message,
         routedAction: effectiveAction,
         semanticResolution,

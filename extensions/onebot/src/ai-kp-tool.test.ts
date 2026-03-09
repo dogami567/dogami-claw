@@ -110,13 +110,22 @@ describe("createOneBotAiKpTools", () => {
     const roll = await byName.onebot_aikp_roll.execute("3", {
       action: "traditional",
       occupationKey: "journalist",
-      originalText: "我想一次全车完卡，角色选记者",
+      originalText: "先给我来张记者卡",
       senderName: "Dogami",
     });
-    expect(roll.details.replyText).toContain("传统随机车卡 已经给你落好了");
-    expect(roll.details.replyText).toContain("Dogami｜记者");
+    expect(roll.details.replyText).toContain("职业先定成 记者");
+    expect(roll.details.usedMessage).toBe("/aikp roll journalist");
 
-    const turn = await byName.onebot_aikp_scene_turn.execute("4", {
+    const finalize = await byName.onebot_aikp_roll.execute("4", {
+      action: "traditional",
+      originalText: "自动分配",
+      senderName: "Dogami",
+    });
+    expect(finalize.details.replyText).toContain("传统随机车卡 已经给你落好了");
+    expect(finalize.details.replyText).toContain("Dogami｜记者");
+    expect(finalize.details.usedMessage).toBe("自动分配");
+
+    const turn = await byName.onebot_aikp_scene_turn.execute("5", {
       originalText: "I check the altar carefully",
       actionKind: "explore",
       intentSummary: "Inspect the altar for fresh scratches",
@@ -132,7 +141,7 @@ describe("createOneBotAiKpTools", () => {
     expect(turn.details.matchedRuleId).toBe("altar-scratch-inspect");
     expect(turn.details.contextPacket).toBeTruthy();
 
-    const history = await byName.onebot_aikp_history.execute("5", {
+    const history = await byName.onebot_aikp_history.execute("6", {
       section: "all",
       limit: 6,
     });

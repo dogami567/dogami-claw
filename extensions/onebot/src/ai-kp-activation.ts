@@ -587,6 +587,8 @@ export async function classifyOneBotAiKpRollRoute(params: {
   agentId?: string | null;
   sessionMode?: string | null;
   hasCurrentInvestigator?: boolean;
+  pendingInvestigatorDraftStage?: string | null;
+  pendingInvestigatorDraftOccupationKey?: string | null;
   knownPlayerCount?: number;
   onError?: (message: string) => void;
 }): Promise<OneBotAiKpRollRouteDecision | null> {
@@ -611,6 +613,8 @@ export async function classifyOneBotAiKpRollRoute(params: {
     "party_quickfire：多人一起快速车卡。",
     "sheet：用户想查看自己当前的人物卡/调查员卡。",
     "normal：这句不是建卡/看卡动作。",
+    "如果 pendingInvestigatorDraftStage=occupation，说明属性已经掷完，当前更像是在等职业；此时像“记者吧”“医生”“算了给我快速医生卡”都还是建卡回复。",
+    "如果 pendingInvestigatorDraftStage=skills，说明职业已经定了，当前更像是在等信用评级/技能偏好；此时像“信用20，侦查图书馆心理学”“自动分配”都应该判成 traditional，而不是 normal。",
     "如果用户只是回答一个职业，例如“记者吧”“医生”，默认判成 traditional，并给出对应 occupationKey。",
     "如果用户提到“快速”“快车卡”，优先 quickfire / party_quickfire。",
     "如果用户提到“大家一起”“全员”“一次全车”，优先 party_traditional / party_quickfire。",
@@ -634,6 +638,8 @@ export async function classifyOneBotAiKpRollRoute(params: {
       text,
       sessionMode: params.sessionMode ?? "idle",
       hasCurrentInvestigator: params.hasCurrentInvestigator === true,
+      pendingInvestigatorDraftStage: params.pendingInvestigatorDraftStage ?? null,
+      pendingInvestigatorDraftOccupationKey: params.pendingInvestigatorDraftOccupationKey ?? null,
       knownPlayerCount: typeof params.knownPlayerCount === "number" ? params.knownPlayerCount : 1,
       occupationOptions: params.occupationOptions,
       channel: "onebot-roll-tool",
@@ -672,6 +678,8 @@ export async function classifyOneBotAiKpDispatchRoute(params: {
   selectedStoryPackId?: string | null;
   pendingResumeChoice?: boolean;
   pendingStoryPackChoice?: boolean;
+  pendingInvestigatorDraftStage?: string | null;
+  pendingInvestigatorDraftOccupationKey?: string | null;
   hasCurrentInvestigator?: boolean;
   currentInvestigatorName?: string | null;
   currentInvestigatorOccupation?: string | null;
@@ -713,6 +721,7 @@ export async function classifyOneBotAiKpDispatchRoute(params: {
     "严格规则：",
     "如果 pendingResumeChoice=true 或 pendingStoryPackChoice=true，优先 route=session。",
     "如果没有选剧本而用户在回答想跑哪个模组/剧本，优先 route=session，并尽量直接给 sessionAction=select_story_pack + storyPackId；只有实在无法映射时才用 reply_to_prompt。",
+    "如果 pendingInvestigatorDraftStage 有值，优先 route=roll。occupation 阶段在等职业；skills 阶段在等信用评级/技能偏好/自动分配。",
     "如果用户是在建卡、回答职业、要看人物卡，route=roll。",
     "只有当 sessionMode=kp 且已经有当前调查员，用户明确是在场内行动、调查、交涉、潜行、跟踪、使用道具时，才 route=scene。",
     "如果用户是在问“现在什么情况”“总结一下”“谁在场”，这属于 session 面板，不是 scene。",
@@ -726,6 +735,8 @@ export async function classifyOneBotAiKpDispatchRoute(params: {
     '- “我想跑团” => route=session + sessionAction=start',
     '- “旧教堂那个就行” => route=session + sessionAction=select_story_pack + storyPackId=old-church-arc-pack',
     '- “记者吧” => route=roll + rollAction=traditional + occupationKey=journalist',
+    '- “信用20，侦查图书馆心理学” => route=roll + rollAction=traditional',
+    '- “自动分配” => route=roll + rollAction=traditional',
     '- “给我快速医生卡” => route=roll + rollAction=quickfire + occupationKey=doctor',
     '- “我看看我现在的人物卡” => route=roll + rollAction=sheet',
     '- “我借着手电去看祭坛背后的刮痕” => route=scene + sceneIntent.actionKind=explore',
@@ -744,6 +755,8 @@ export async function classifyOneBotAiKpDispatchRoute(params: {
       selectedStoryPackId: params.selectedStoryPackId ?? null,
       pendingResumeChoice: params.pendingResumeChoice === true,
       pendingStoryPackChoice: params.pendingStoryPackChoice === true,
+      pendingInvestigatorDraftStage: params.pendingInvestigatorDraftStage ?? null,
+      pendingInvestigatorDraftOccupationKey: params.pendingInvestigatorDraftOccupationKey ?? null,
       hasCurrentInvestigator: params.hasCurrentInvestigator === true,
       currentInvestigatorName: params.currentInvestigatorName ?? null,
       currentInvestigatorOccupation: params.currentInvestigatorOccupation ?? null,

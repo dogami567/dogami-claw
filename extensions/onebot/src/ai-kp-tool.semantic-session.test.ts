@@ -115,9 +115,9 @@ describe("onebot_aikp_session semantic_reply", () => {
       senderName: "Dogami",
     });
     await byName.onebot_aikp_roll.execute("3", {
-      action: "traditional",
+      action: "quickfire",
       occupationKey: "journalist",
-      originalText: "给我来张记者卡",
+      originalText: "给我来张快速记者卡",
       senderName: "Dogami",
     });
 
@@ -160,9 +160,9 @@ describe("onebot_aikp_session semantic_reply", () => {
       senderName: "Dogami",
     });
     await byName.onebot_aikp_roll.execute("3", {
-      action: "traditional",
+      action: "quickfire",
       occupationKey: "journalist",
-      originalText: "给我来张记者卡",
+      originalText: "给我来张快速记者卡",
       senderName: "Dogami",
     });
     await byName.onebot_aikp_session.execute("4", {
@@ -246,9 +246,9 @@ describe("onebot_aikp_session semantic_reply", () => {
       senderName: "Dogami",
     });
     await byName.onebot_aikp_roll.execute("3", {
-      action: "traditional",
+      action: "quickfire",
       occupationKey: "journalist",
-      originalText: "给我来张记者卡",
+      originalText: "给我来张快速记者卡",
       senderName: "Dogami",
     });
 

@@ -112,11 +112,11 @@ afterEach(async () => {
 });
 
 describe("onebot_aikp_roll semantic_reply", () => {
-  it("routes occupation-only replies to a traditional roll", async () => {
+  it("routes occupation-only replies into the traditional chargen draft", async () => {
     classifyOneBotAiKpRollRouteMock.mockResolvedValueOnce({
       action: "traditional",
       confidence: 0.97,
-      reason: "occupation-only answer should create a standard sheet",
+      reason: "occupation-only answer should move chargen into the skill step",
       occupationKey: "journalist",
     });
 
@@ -135,8 +135,42 @@ describe("onebot_aikp_roll semantic_reply", () => {
     });
     expect(rolled.details.occupationKey).toBe("journalist");
     expect(rolled.details.usedMessage).toBe("/aikp roll journalist");
-    expect(rolled.details.replyText).toContain("传统随机车卡 已经给你落好了");
-    expect(rolled.details.replyText).toContain("Dogami｜记者");
+    expect(rolled.details.replyText).toContain("职业先定成 记者");
+    expect(rolled.details.replyText).toContain("职业技能点");
+  });
+
+  it("passes skill-allocation replies through raw text while a traditional draft is pending", async () => {
+    classifyOneBotAiKpRollRouteMock
+      .mockResolvedValueOnce({
+        action: "traditional",
+        confidence: 0.97,
+        reason: "occupation-only answer should move chargen into the skill step",
+        occupationKey: "journalist",
+      })
+      .mockResolvedValueOnce({
+        action: "traditional",
+        confidence: 0.95,
+        reason: "credit and skill preferences are still part of traditional chargen",
+      });
+
+    const byName = await createTools();
+    await enterChargenPrompt(byName);
+    await byName.onebot_aikp_roll.execute("3", {
+      action: "semantic_reply",
+      originalText: "记者吧",
+      senderName: "Dogami",
+    });
+
+    const finalized = await byName.onebot_aikp_roll.execute("4", {
+      action: "semantic_reply",
+      originalText: "信用20，侦查、图书馆、心理学、说服",
+      senderName: "Dogami",
+    });
+    expect(finalized.details.routedAction).toBe("traditional");
+    expect(finalized.details.usedMessage).toBe("信用20，侦查、图书馆、心理学、说服");
+    expect(finalized.details.replyText).toContain("传统随机车卡 已经给你落好了");
+    expect(finalized.details.replyText).toContain("Dogami｜记者");
+    expect(finalized.details.replyText).toContain("信用评级 20");
   });
 
   it("routes quickfire freeform replies to quickfire with the inferred occupation", async () => {
@@ -194,24 +228,18 @@ describe("onebot_aikp_roll semantic_reply", () => {
   });
 
   it("routes freeform sheet requests to the sheet action", async () => {
-    classifyOneBotAiKpRollRouteMock
-      .mockResolvedValueOnce({
-        action: "traditional",
-        confidence: 0.95,
-        reason: "user picked journalist",
-        occupationKey: "journalist",
-      })
-      .mockResolvedValueOnce({
-        action: "sheet",
-        confidence: 0.94,
-        reason: "user asked to inspect the current sheet",
-      });
+    classifyOneBotAiKpRollRouteMock.mockResolvedValueOnce({
+      action: "sheet",
+      confidence: 0.94,
+      reason: "user asked to inspect the current sheet",
+    });
 
     const byName = await createTools();
     await enterChargenPrompt(byName);
     await byName.onebot_aikp_roll.execute("3", {
-      action: "semantic_reply",
-      originalText: "记者吧",
+      action: "quickfire",
+      occupationKey: "journalist",
+      originalText: "给我快速记者卡",
       senderName: "Dogami",
     });
 

@@ -16,6 +16,11 @@ type AiKpMeta = {
   sessionMode?: string;
   pendingResumeChoice?: Record<string, unknown> | null;
   pendingStoryPackChoice?: Record<string, unknown> | null;
+  pendingInvestigatorDraft?: {
+    stage?: string;
+    occupationKey?: string | null;
+    occupationName?: string | null;
+  } | null;
   storyPackId?: string | null;
 };
 
@@ -42,6 +47,11 @@ type AiKpContextPacket = {
       currentActorName?: string;
       round?: number;
     };
+    pendingInvestigatorDraft?: {
+      stage?: string;
+      occupationKey?: string | null;
+      occupationName?: string | null;
+    } | null;
     revealedClues?: string[];
     investigators?: AiKpInvestigator[];
   };
@@ -342,7 +352,7 @@ function buildActiveToolGuideLines(): string[] {
     `[Available Tools]`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.dispatch}: preferred front door for almost any direct player message. Give it the raw message first so it can route semantically into session/roll/scene handling without forcing rigid commands.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.session}: narrower session-control tool for start/resume/pause, save/story-pack choices, panels, spotlight and turn order. For freeform answers such as “接昨晚那条” or “别续旧档了”，prefer action=semantic_reply if you are already deliberately using the session tool.`,
-    `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: narrower sheet/chargen tool. For natural replies such as “记者吧”“给我快速医生卡”“大家一起车吧”，prefer action=semantic_reply if you are already deliberately using the roll tool.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: narrower sheet/chargen tool. For natural replies such as “记者吧”“信用20，侦查图书馆心理学”“自动分配”“给我快速医生卡”“大家一起车吧”，prefer action=semantic_reply if you are already deliberately using the roll tool.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.sceneTurn}: narrower in-world action tool. It can infer scene semantics from originalText alone, but structured fields such as actionKind/skillKey/targetNpc/targetClue/targetArea remain the most precise path.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.history}: pull older summaries/chat/operations if compaction hid earlier context.`,
   ];
@@ -358,6 +368,13 @@ function buildSessionMetaLines(meta?: AiKpMeta | null): string[] {
   if (meta?.pendingStoryPackChoice) {
     lines.push("Pending choice: select the story pack before scene play continues.");
   }
+  if (meta?.pendingInvestigatorDraft?.stage) {
+    const occupation =
+      normalizeLine(meta.pendingInvestigatorDraft.occupationName) ??
+      normalizeLine(meta.pendingInvestigatorDraft.occupationKey) ??
+      "undecided";
+    lines.push(`Pending chargen: ${meta.pendingInvestigatorDraft.stage} step (${occupation}).`);
+  }
   const storyPackId = normalizeLine(meta?.storyPackId);
   if (storyPackId) lines.push(`Selected story pack: ${storyPackId}`);
   return lines;
@@ -368,7 +385,7 @@ function buildIdleToolGuideLines(): string[] {
     `[Available Tools]`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.dispatch}: preferred front door for direct player messages. Use it first when the user might be starting a run, picking a story pack, building a card, asking for state, or taking an in-world action.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.session}: narrower session-control tool. Use action=semantic_reply when the player answered naturally and you should map it to resume/new-line/panel/list behavior.`,
-    `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: narrower sheet tool. Use action=semantic_reply when the player naturally answers a chargen prompt, only names an occupation, or asks for quick/traditional/party chargen without fixed wording.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: narrower sheet tool. Use action=semantic_reply when the player naturally answers a chargen prompt, only names an occupation, gives credit/skill preferences, says “自动分配”, or asks for quick/traditional/party chargen without fixed wording.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.sceneTurn}: use only after the conversation is actually in an active TRPG scene, or when dispatch already routed here.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.history}: read older AI-KP logs if you need compacted context.`,
   ];
@@ -436,6 +453,14 @@ function buildAiKpPromptBlock(params: {
   }
   const investigators = formatInvestigators(state?.investigators);
   if (investigators) lines.push(`Party: ${investigators}`);
+  const pendingDraftStage = normalizeLine(state?.pendingInvestigatorDraft?.stage);
+  if (pendingDraftStage) {
+    const pendingOccupation =
+      normalizeLine(state?.pendingInvestigatorDraft?.occupationName) ??
+      normalizeLine(state?.pendingInvestigatorDraft?.occupationKey) ??
+      "未定";
+    lines.push(`Pending chargen stage: ${pendingDraftStage} (${pendingOccupation})`);
+  }
 
   if (summaryText) {
     lines.push("", "[Recent Summary]", summaryText);
@@ -481,7 +506,7 @@ function buildIdleAiKpPromptBlock(params: {
     `If a tool result says a resume/new-line or story-pack choice is pending, ask that choice plainly and wait for the user's answer.`,
     `For almost any direct player message about AI-KP play, use ${ONEBOT_AIKP_TOOL_NAMES.dispatch} first instead of hand-picking narrower tools.`,
     `When the user answers that pending question in natural language, use ${ONEBOT_AIKP_TOOL_NAMES.session} with action=semantic_reply instead of demanding exact words.`,
-    `When a user answers the chargen step naturally, such as only naming an occupation or asking for quickfire in freeform text, use ${ONEBOT_AIKP_TOOL_NAMES.roll} with action=semantic_reply.`,
+    `When a user answers the chargen step naturally, such as only naming an occupation, giving credit/skill preferences, saying “自动分配”, or asking for quickfire in freeform text, use ${ONEBOT_AIKP_TOOL_NAMES.roll} with action=semantic_reply.`,
     `If the user is just discussing features, asking how AI-KP works, or chatting normally, answer without AI-KP tools.`,
     "",
     ...buildIdleToolGuideLines(),

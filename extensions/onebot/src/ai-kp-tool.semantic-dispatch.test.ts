@@ -118,6 +118,12 @@ describe("onebot_aikp_dispatch", () => {
         reason: "user picked journalist",
       })
       .mockResolvedValueOnce({
+        route: "roll",
+        rollAction: "traditional",
+        confidence: 0.95,
+        reason: "user is giving skill allocation preferences",
+      })
+      .mockResolvedValueOnce({
         route: "scene",
         confidence: 0.95,
         reason: "user is inspecting the altar area",
@@ -152,10 +158,18 @@ describe("onebot_aikp_dispatch", () => {
       senderName: "Dogami",
     });
     expect(roll.details.routedTool).toBe("onebot_aikp_roll");
-    expect(roll.details.replyText).toContain("传统随机车卡 已经给你落好了");
-    expect(roll.details.replyText).toContain("Dogami｜记者");
+    expect(roll.details.replyText).toContain("职业先定成 记者");
 
-    const scene = await byName.onebot_aikp_dispatch.execute("4", {
+    const finalize = await byName.onebot_aikp_dispatch.execute("4", {
+      originalText: "信用20，侦查、图书馆、心理学、说服",
+      senderName: "Dogami",
+    });
+    expect(finalize.details.routedTool).toBe("onebot_aikp_roll");
+    expect(finalize.details.usedMessage).toBe("信用20，侦查、图书馆、心理学、说服");
+    expect(finalize.details.replyText).toContain("传统随机车卡 已经给你落好了");
+    expect(finalize.details.replyText).toContain("Dogami｜记者");
+
+    const scene = await byName.onebot_aikp_dispatch.execute("5", {
       originalText: "我借着手电去看祭坛背后的刮痕",
       senderName: "Dogami",
     });
@@ -202,10 +216,10 @@ describe("onebot_aikp_scene_turn semantic inference", () => {
       })
       .mockResolvedValueOnce({
         route: "roll",
-        rollAction: "traditional",
+        rollAction: "quickfire",
         occupationKey: "journalist",
         confidence: 0.96,
-        reason: "user picked journalist",
+        reason: "user wants a quick journalist sheet",
       })
       .mockResolvedValueOnce({
         route: "scene",
@@ -230,7 +244,7 @@ describe("onebot_aikp_scene_turn semantic inference", () => {
       senderName: "Dogami",
     });
     await byName.onebot_aikp_dispatch.execute("3", {
-      originalText: "记者吧",
+      originalText: "给我快速记者卡",
       senderName: "Dogami",
     });
 
