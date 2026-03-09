@@ -30,6 +30,7 @@ async function createConversationFiles(params: {
   storageRoot: string;
   conversationKey: string;
   sessionMode?: string;
+  meta?: Record<string, unknown>;
   context?: Record<string, unknown>;
 }) {
   const metaDir = path.join(params.storageRoot, "meta");
@@ -38,7 +39,7 @@ async function createConversationFiles(params: {
   await mkdir(contextDir, { recursive: true });
   await writeFile(
     path.join(metaDir, `${params.conversationKey}.json`),
-    JSON.stringify({ sessionMode: params.sessionMode ?? "kp" }, null, 2),
+    JSON.stringify({ sessionMode: params.sessionMode ?? "kp", ...(params.meta ?? {}) }, null, 2),
   );
   if (params.context) {
     await writeFile(
@@ -124,6 +125,7 @@ describe("loadOneBotAiKpContext", () => {
     expect(result?.promptBlock).toContain("[Available Tools]");
     expect(result?.promptBlock).toContain("Scene: 旧教堂夜访");
     expect(result?.promptBlock).toContain("Round: 3");
+    expect(result?.promptBlock).toContain("Session mode: kp");
     expect(result?.promptBlock).toContain("[Recent Summary]");
     expect(result?.promptBlock).toContain("[Recent Operations]");
     expect(result?.promptBlock).toContain("[Recent Chat]");
@@ -143,6 +145,11 @@ describe("loadOneBotAiKpContext", () => {
       storageRoot,
       conversationKey,
       sessionMode: "idle",
+      meta: {
+        pendingResumeChoice: {
+          askedAt: "2026-03-08T00:00:00.000Z",
+        },
+      },
     });
 
     const result = await loadOneBotAiKpContext({
@@ -159,6 +166,7 @@ describe("loadOneBotAiKpContext", () => {
     expect(result?.promptBlock).toContain("[Player Context]");
     expect(result?.promptBlock).toContain("[Available Tools]");
     expect(result?.promptBlock).toContain("TRPG session is currently idle");
+    expect(result?.promptBlock).toContain("Pending choice: resume current save or start a new line.");
     expect(result?.promptBlock).toContain("onebot_aikp_session");
     expect(result?.promptBlock).toContain("onebot_aikp_roll");
     expect(result?.promptBlock).toContain("action=semantic_reply");

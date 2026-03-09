@@ -14,6 +14,9 @@ const MAX_LINE_CHARS = 220;
 
 type AiKpMeta = {
   sessionMode?: string;
+  pendingResumeChoice?: Record<string, unknown> | null;
+  pendingStoryPackChoice?: Record<string, unknown> | null;
+  storyPackId?: string | null;
 };
 
 type AiKpSummaryChunk = {
@@ -344,6 +347,21 @@ function buildActiveToolGuideLines(): string[] {
   ];
 }
 
+function buildSessionMetaLines(meta?: AiKpMeta | null): string[] {
+  const lines: string[] = [];
+  const sessionMode = normalizeLine(meta?.sessionMode);
+  if (sessionMode) lines.push(`Session mode: ${sessionMode}`);
+  if (meta?.pendingResumeChoice) {
+    lines.push("Pending choice: resume current save or start a new line.");
+  }
+  if (meta?.pendingStoryPackChoice) {
+    lines.push("Pending choice: select the story pack before scene play continues.");
+  }
+  const storyPackId = normalizeLine(meta?.storyPackId);
+  if (storyPackId) lines.push(`Selected story pack: ${storyPackId}`);
+  return lines;
+}
+
 function buildIdleToolGuideLines(): string[] {
   return [
     `[Available Tools]`,
@@ -359,6 +377,7 @@ function buildAiKpPromptBlock(params: {
   contextFile: string;
   config: ResolvedOneBotAiKpConfig;
   context?: AiKpContextPacket | null;
+  meta?: AiKpMeta | null;
 }): string {
   const context = params.context ?? null;
   const state = context?.state;
@@ -398,6 +417,7 @@ function buildAiKpPromptBlock(params: {
     `When the player's intent is clear, do not ask them to repeat literal phrases like “续上” or “新开”; use session tools to route the meaning directly.`,
   );
   lines.push("", "[Player Context]", `Conversation key: ${params.conversationKey}`);
+  lines.push(...buildSessionMetaLines(params.meta));
 
   const scene = normalizeLine(state?.scene?.summary);
   if (scene) lines.push(`Scene: ${scene}`);
@@ -441,6 +461,7 @@ function buildIdleAiKpPromptBlock(params: {
   conversationKey: string;
   contextFile: string;
   config: ResolvedOneBotAiKpConfig;
+  meta?: AiKpMeta | null;
 }): string {
   const lines = [
     `[Persona]`,
@@ -450,6 +471,7 @@ function buildIdleAiKpPromptBlock(params: {
     "[Player Context]",
     `Conversation key: ${params.conversationKey}`,
   ];
+  lines.push(...buildSessionMetaLines(params.meta));
   if (params.config.includeLogHint) {
     lines.push(`Context file: ${params.contextFile}`);
   }
@@ -521,6 +543,7 @@ export async function loadOneBotAiKpContext(params: {
             conversationKey,
             contextFile: layout.contextFile,
             config,
+            meta,
           })
         : undefined,
     };
@@ -536,6 +559,7 @@ export async function loadOneBotAiKpContext(params: {
       contextFile: layout.contextFile,
       config,
       context,
+      meta,
     }),
   };
 }

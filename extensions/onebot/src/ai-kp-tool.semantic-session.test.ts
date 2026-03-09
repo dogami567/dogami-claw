@@ -200,4 +200,65 @@ describe("onebot_aikp_session semantic_reply", () => {
     expect(result.details.noSessionAction).toBe(true);
     expect(result.details.replyText).toBeNull();
   });
+
+  it("routes natural-language story-pack replies through the pending prompt path", async () => {
+    classifyOneBotAiKpSessionRouteMock.mockResolvedValueOnce({
+      action: "reply_to_prompt",
+      confidence: 0.93,
+      reason: "user answered the story-pack question naturally",
+    });
+
+    const byName = await createTools();
+    const started = await byName.onebot_aikp_session.execute("1", {
+      action: "start",
+      originalText: "我想跑团",
+      senderName: "Dogami",
+    });
+    expect(started.details.replyText).toContain("当前可选剧本");
+
+    const picked = await byName.onebot_aikp_session.execute("2", {
+      action: "semantic_reply",
+      originalText: "旧教堂那个就行",
+      senderName: "Dogami",
+    });
+    expect(picked.details.routedAction).toBe("reply_to_prompt");
+    expect(picked.details.usedMessage).toBe("旧教堂那个就行");
+    expect(picked.details.replyText).toContain("你现在还没车卡");
+  });
+
+  it("routes natural-language state questions to the state panel", async () => {
+    classifyOneBotAiKpSessionRouteMock.mockResolvedValueOnce({
+      action: "panel_state",
+      confidence: 0.96,
+      reason: "user is asking for current run state",
+    });
+
+    const byName = await createTools();
+    await byName.onebot_aikp_session.execute("1", {
+      action: "start",
+      originalText: "我想跑团",
+      senderName: "Dogami",
+    });
+    await byName.onebot_aikp_session.execute("2", {
+      action: "select_story_pack",
+      value: "old-church-arc-pack",
+      originalText: "跑旧教堂",
+      senderName: "Dogami",
+    });
+    await byName.onebot_aikp_roll.execute("3", {
+      action: "traditional",
+      occupationKey: "journalist",
+      originalText: "给我来张记者卡",
+      senderName: "Dogami",
+    });
+
+    const state = await byName.onebot_aikp_session.execute("4", {
+      action: "semantic_reply",
+      originalText: "现在什么情况",
+      senderName: "Dogami",
+    });
+    expect(state.details.routedAction).toBe("panel");
+    expect(state.details.routedPanel).toBe("state");
+    expect(state.details.replyText).toContain("场景");
+  });
 });
