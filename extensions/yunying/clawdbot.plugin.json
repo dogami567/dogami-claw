@@ -1,0 +1,58 @@
+{
+  "id": "yunying",
+  "name": "Yunying",
+  "description": "Phone-bound运营编排工具：skill 驱动的后台任务、替换、状态与日志。",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "skillsDir": {
+        "type": "string",
+        "description": "Optional custom directory for .skill.json files."
+      },
+      "defaultAccountId": {
+        "type": "string",
+        "description": "Default phone account to use when calls omit accountId."
+      },
+      "defaultMode": {
+        "type": "string",
+        "enum": ["direct", "monitor"],
+        "description": "Default phone runtime mode for stage execution."
+      },
+      "defaultWaitTimeoutMs": {
+        "type": "number",
+        "minimum": 1000,
+        "description": "Default wait timeout for each phone stage."
+      },
+      "autoResumeEnabled": {
+        "type": "boolean",
+        "description": "Automatically resume recoverable interrupted jobs and stale workers."
+      },
+      "autoResumeDelayMs": {
+        "type": "number",
+        "minimum": 1000,
+        "description": "Base backoff delay before a recoverable worker resumes."
+      },
+      "autoResumeMaxDelayMs": {
+        "type": "number",
+        "minimum": 1000,
+        "description": "Maximum backoff delay between automatic resume attempts."
+      },
+      "autoResumeMaxAttempts": {
+        "type": "number",
+        "minimum": 1,
+        "description": "Maximum automatic resume attempts before the worker pauses."
+      },
+      "supervisorPollMs": {
+        "type": "number",
+        "minimum": 1000,
+        "description": "How often the background supervisor scans for due workers."
+      },
+      "maxLogEntries": {
+        "type": "number",
+        "minimum": 1,
+        "description": "Default max log entries returned by logs/status."
+      }
+    }
+  }
+}

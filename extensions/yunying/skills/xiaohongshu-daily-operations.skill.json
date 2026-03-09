@@ -1,0 +1,74 @@
+{
+  "id": "xiaohongshu-daily-operations",
+  "name": "小红书日常运营",
+  "platform": "xiaohongshu",
+  "summary": "围绕浏览、搜索、互动和回复的阶段化运营 skill。",
+  "stages": [
+    {
+      "id": "open-app",
+      "name": "进入小红书",
+      "objective": "打开目标 App 并确认账号处于可运营状态",
+      "actions": [
+        "打开小红书",
+        "检查首页是否加载完成",
+        "确认账号没有被登录态打断"
+      ],
+      "completionCriteria": [
+        "已进入首页或推荐页",
+        "能看到可滚动内容流"
+      ],
+      "failureStrategy": "若 App 未打开成功，则回到桌面后再次尝试一次。"
+    },
+    {
+      "id": "browse-and-search",
+      "name": "浏览并搜索目标内容",
+      "objective": "按照关键词与停留策略完成内容探索",
+      "actions": [
+        "浏览推荐流 2-3 条内容并按策略停留",
+        "搜索关键词：护肤、通勤穿搭、上海探店",
+        "进入至少 1 条搜索结果内容"
+      ],
+      "completionCriteria": [
+        "完成至少 2 次浏览停留",
+        "完成至少 1 次关键词搜索"
+      ],
+      "failureStrategy": "若搜索结果异常，则切换到备用关键词并重试一次。"
+    },
+    {
+      "id": "engage-and-reply",
+      "name": "互动与回复",
+      "objective": "完成点赞、评论回复或私信等互动动作",
+      "actions": [
+        "给第 3 条和第 5 条合适内容点赞",
+        "回复主贴或评论区中的目标内容",
+        "必要时进入私信完成跟进"
+      ],
+      "completionCriteria": [
+        "至少完成 2 次点赞",
+        "至少完成 1 次回复或私信"
+      ],
+      "failureStrategy": "若评论区限制发言，则切换为私信或记录失败原因。"
+    }
+  ],
+  "risks": [
+    {
+      "id": "anti-spam",
+      "level": "high",
+      "rule": "连续互动动作之间保持自然间隔，避免高频重复点击。",
+      "fallback": "若触发限制或页面异常，立即停止互动并记录人工检查。"
+    },
+    {
+      "id": "account-safety",
+      "level": "medium",
+      "rule": "检测到登录、验证或异常弹窗时暂停自动执行。",
+      "fallback": "将 Job 标记为 blocked 并请求人工处理。"
+    }
+  ],
+  "defaults": {
+    "phoneMode": "monitor",
+    "waitTimeoutMs": 180000,
+    "monitorUseScreenshot": true,
+    "maxRounds": 4,
+    "executorMaxSteps": 4
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@clawdbot/yunying",
+  "version": "2026.3.9",
+  "type": "module",
+  "description": "Clawdbot phone operations orchestration plugin",
+  "clawdbot": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
