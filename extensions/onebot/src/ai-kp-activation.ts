@@ -5,6 +5,13 @@ import fs from "node:fs/promises";
 import type { ClawdbotConfig } from "clawdbot/plugin-sdk";
 
 import { resolveOneBotAiKpConfig } from "./ai-kp-context.js";
+import {
+  SCENE_ACTION_KINDS,
+  SCENE_ACTION_MODES,
+  SCENE_DURATIONS,
+  SCENE_RISK_LEVELS,
+  type SemanticSceneIntent,
+} from "./ai-kp-semantic-scene.js";
 
 type RunEmbeddedPiAgentFn = (params: Record<string, unknown>) => Promise<unknown>;
 
@@ -56,6 +63,32 @@ export type OneBotAiKpRollRouteDecision = {
   occupationKey?: string;
 };
 
+export type OneBotAiKpDispatchRouteIntent = "normal" | "session" | "roll" | "scene";
+
+export type OneBotAiKpDispatchSessionAction =
+  | "start"
+  | "resume"
+  | "new_line"
+  | "pause"
+  | "reply_to_prompt"
+  | "list_saves"
+  | "list_story_packs"
+  | "select_story_pack"
+  | "panel_state"
+  | "panel_recap"
+  | "panel_party";
+
+export type OneBotAiKpDispatchDecision = {
+  route: OneBotAiKpDispatchRouteIntent;
+  confidence: number;
+  reason: string;
+  sessionAction?: OneBotAiKpDispatchSessionAction;
+  storyPackId?: string;
+  rollAction?: Exclude<OneBotAiKpRollRouteIntent, "normal">;
+  occupationKey?: string;
+  sceneIntent?: SemanticSceneIntent;
+};
+
 const VALID_ACTIONS = new Set<OneBotAiKpActivationIntent>([
   "normal",
   "start",
@@ -87,6 +120,40 @@ const VALID_ROLL_ROUTE_ACTIONS = new Set<OneBotAiKpRollRouteIntent>([
   "party_quickfire",
   "sheet",
 ]);
+
+const VALID_DISPATCH_ROUTE_ACTIONS = new Set<OneBotAiKpDispatchRouteIntent>([
+  "normal",
+  "session",
+  "roll",
+  "scene",
+]);
+
+const VALID_DISPATCH_SESSION_ACTIONS = new Set<OneBotAiKpDispatchSessionAction>([
+  "start",
+  "resume",
+  "new_line",
+  "pause",
+  "reply_to_prompt",
+  "list_saves",
+  "list_story_packs",
+  "select_story_pack",
+  "panel_state",
+  "panel_recap",
+  "panel_party",
+]);
+
+const VALID_DISPATCH_ROLL_ACTIONS = new Set<Exclude<OneBotAiKpRollRouteIntent, "normal">>([
+  "traditional",
+  "quickfire",
+  "party_traditional",
+  "party_quickfire",
+  "sheet",
+]);
+
+const VALID_SCENE_ACTION_KINDS = new Set<string>(SCENE_ACTION_KINDS);
+const VALID_SCENE_RISK_LEVELS = new Set<string>(SCENE_RISK_LEVELS);
+const VALID_SCENE_ACTION_MODES = new Set<string>(SCENE_ACTION_MODES);
+const VALID_SCENE_DURATIONS = new Set<string>(SCENE_DURATIONS);
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_MAX_TOKENS = 120;
@@ -219,6 +286,122 @@ function validateRollRouteDecision(raw: unknown): OneBotAiKpRollRouteDecision | 
     confidence: clampConfidence((raw as { confidence?: unknown }).confidence),
     reason: String((raw as { reason?: unknown }).reason ?? "").trim(),
     occupationKey,
+  };
+}
+
+function cleanOptionalString(raw: unknown): string | undefined {
+  return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+}
+
+function cleanOptionalStringArray(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const values = raw
+    .map((entry) => cleanOptionalString(entry))
+    .filter((entry): entry is string => Boolean(entry));
+  return values.length > 0 ? values : undefined;
+}
+
+function clampInteger(raw: unknown, min: number, max: number): number | undefined {
+  const value = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(value)) return undefined;
+  return Math.max(min, Math.min(max, Math.round(value)));
+}
+
+function validateDispatchSceneIntent(raw: unknown): SemanticSceneIntent | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const actionKind = cleanOptionalString((raw as { actionKind?: unknown }).actionKind);
+  if (!actionKind || !VALID_SCENE_ACTION_KINDS.has(actionKind)) return undefined;
+  const riskLevel = cleanOptionalString((raw as { riskLevel?: unknown }).riskLevel);
+  const mode = cleanOptionalString((raw as { mode?: unknown }).mode);
+  const duration = cleanOptionalString((raw as { duration?: unknown }).duration);
+  return {
+    actionKind: actionKind as SemanticSceneIntent["actionKind"],
+    intentSummary: cleanOptionalString((raw as { intentSummary?: unknown }).intentSummary),
+    normalizedAction: cleanOptionalString((raw as { normalizedAction?: unknown }).normalizedAction),
+    skillKey: cleanOptionalString((raw as { skillKey?: unknown }).skillKey),
+    targetNpc: cleanOptionalString((raw as { targetNpc?: unknown }).targetNpc),
+    targetClue: cleanOptionalString((raw as { targetClue?: unknown }).targetClue),
+    targetArea: cleanOptionalString((raw as { targetArea?: unknown }).targetArea),
+    itemName: cleanOptionalString((raw as { itemName?: unknown }).itemName),
+    riskLevel:
+      riskLevel && VALID_SCENE_RISK_LEVELS.has(riskLevel)
+        ? (riskLevel as SemanticSceneIntent["riskLevel"])
+        : undefined,
+    impactScore: clampInteger((raw as { impactScore?: unknown }).impactScore, 0, 5),
+    leverageScore: clampInteger((raw as { leverageScore?: unknown }).leverageScore, 0, 5),
+    narrativeBonus: clampInteger((raw as { narrativeBonus?: unknown }).narrativeBonus, 0, 5),
+    mode:
+      mode && VALID_SCENE_ACTION_MODES.has(mode)
+        ? (mode as SemanticSceneIntent["mode"])
+        : undefined,
+    duration:
+      duration && VALID_SCENE_DURATIONS.has(duration)
+        ? (duration as SemanticSceneIntent["duration"])
+        : undefined,
+    revealClueId: cleanOptionalString((raw as { revealClueId?: unknown }).revealClueId),
+    clueTitle: cleanOptionalString((raw as { clueTitle?: unknown }).clueTitle),
+    clueKind: cleanOptionalString((raw as { clueKind?: unknown }).clueKind),
+    clueQuality: cleanOptionalString((raw as { clueQuality?: unknown }).clueQuality),
+    failureEventLabel: cleanOptionalString((raw as { failureEventLabel?: unknown }).failureEventLabel),
+    onSuccessPrompt: cleanOptionalString((raw as { onSuccessPrompt?: unknown }).onSuccessPrompt),
+    onFailPrompt: cleanOptionalString((raw as { onFailPrompt?: unknown }).onFailPrompt),
+    routineHints: cleanOptionalStringArray((raw as { routineHints?: unknown }).routineHints),
+    environmentTags: cleanOptionalStringArray((raw as { environmentTags?: unknown }).environmentTags),
+  };
+}
+
+function validateDispatchDecision(
+  raw: unknown,
+  options?: { storyPackIds?: Set<string> },
+): OneBotAiKpDispatchDecision | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const route = cleanOptionalString((raw as { route?: unknown }).route) as OneBotAiKpDispatchRouteIntent | undefined;
+  if (!route || !VALID_DISPATCH_ROUTE_ACTIONS.has(route)) return null;
+
+  const base = {
+    route,
+    confidence: clampConfidence((raw as { confidence?: unknown }).confidence),
+    reason: String((raw as { reason?: unknown }).reason ?? "").trim(),
+  };
+
+  if (route === "normal") {
+    return base;
+  }
+
+  if (route === "session") {
+    const sessionAction = cleanOptionalString((raw as { sessionAction?: unknown }).sessionAction) as
+      | OneBotAiKpDispatchSessionAction
+      | undefined;
+    if (!sessionAction || !VALID_DISPATCH_SESSION_ACTIONS.has(sessionAction)) return null;
+    const storyPackId = cleanOptionalString((raw as { storyPackId?: unknown }).storyPackId);
+    if (sessionAction === "select_story_pack" && !storyPackId) return null;
+    if (storyPackId && options?.storyPackIds && !options.storyPackIds.has(storyPackId)) {
+      return null;
+    }
+    return {
+      ...base,
+      sessionAction,
+      storyPackId,
+    };
+  }
+
+  if (route === "roll") {
+    const rollAction = cleanOptionalString((raw as { rollAction?: unknown }).rollAction) as
+      | Exclude<OneBotAiKpRollRouteIntent, "normal">
+      | undefined;
+    if (!rollAction || !VALID_DISPATCH_ROLL_ACTIONS.has(rollAction)) return null;
+    return {
+      ...base,
+      rollAction,
+      occupationKey: cleanOptionalString((raw as { occupationKey?: unknown }).occupationKey),
+    };
+  }
+
+  const sceneIntent = validateDispatchSceneIntent((raw as { sceneIntent?: unknown }).sceneIntent);
+  if (!sceneIntent?.actionKind) return null;
+  return {
+    ...base,
+    sceneIntent,
   };
 }
 
@@ -470,5 +653,115 @@ export async function classifyOneBotAiKpRollRoute(params: {
       return parsed;
     },
     errorLabel: "roll router",
+  });
+}
+
+export async function classifyOneBotAiKpDispatchRoute(params: {
+  cfg: ClawdbotConfig;
+  text: string;
+  storyPackOptions: Array<{
+    id: string;
+    title?: string | null;
+    campaignId?: string | null;
+    campaignTitle?: string | null;
+  }>;
+  occupationOptions: Array<{ key: string; name?: string | null }>;
+  agentId?: string | null;
+  sessionMode?: string | null;
+  hasSelectedStoryPack?: boolean;
+  selectedStoryPackId?: string | null;
+  pendingResumeChoice?: boolean;
+  pendingStoryPackChoice?: boolean;
+  hasCurrentInvestigator?: boolean;
+  currentInvestigatorName?: string | null;
+  currentInvestigatorOccupation?: string | null;
+  sceneSummary?: string | null;
+  sceneLocation?: string | null;
+  currentFocus?: string | null;
+  revealedClues?: string[];
+  npcNames?: string[];
+  areaNames?: string[];
+  knownPlayerCount?: number;
+  onError?: (message: string) => void;
+}): Promise<OneBotAiKpDispatchDecision | null> {
+  const config = resolveOneBotAiKpConfig(params.cfg);
+  if (!config.activationRouterEnabled) return null;
+
+  const text = params.text.trim();
+  if (!text) return null;
+
+  const storyPackList = params.storyPackOptions
+    .map((entry) =>
+      [entry.id, entry.title ? `title:${entry.title}` : null, entry.campaignTitle ? `campaign:${entry.campaignTitle}` : null]
+        .filter(Boolean)
+        .join(" | "),
+    )
+    .join("; ");
+  const occupationList = params.occupationOptions
+    .map((entry) => `${entry.key}${entry.name ? `(${entry.name})` : ""}`)
+    .join(", ");
+
+  const prompt = [
+    "你是 QQ 机器人“麦麦”的 AI-KP 总路由器，只判断这句自然语言在当前跑团上下文里应该走哪条工具链，并直接给出该工具需要的关键参数。",
+    '你必须只返回一个 JSON 对象。格式只能是：',
+    '{"route":"normal|session|roll|scene","confidence":0..1,"reason":"简短中文说明","sessionAction":"可选","storyPackId":"可选","rollAction":"可选","occupationKey":"可选","sceneIntent":{"actionKind":"...","intentSummary":"...","skillKey":"可选","targetNpc":"可选","targetClue":"可选","targetArea":"可选","itemName":"可选","riskLevel":"可选","mode":"可选","duration":"可选","revealClueId":"可选","clueTitle":"可选","failureEventLabel":"可选","onSuccessPrompt":"可选","onFailPrompt":"可选","routineHints":["可选"],"environmentTags":["可选"]}}',
+    "route 含义：",
+    "normal：普通聊天、功能讨论、问配置、闲聊，不该走 AI-KP 工具。",
+    "session：开始/续档/新开/暂停/选剧本/看状态面板/回顾/队伍等会话控制。",
+    "roll：建卡、快速车卡、批量车卡、看人物卡。",
+    "scene：正式跑团中的场内动作，要给出 sceneIntent.actionKind 和尽量完整的语义字段。",
+    "严格规则：",
+    "如果 pendingResumeChoice=true 或 pendingStoryPackChoice=true，优先 route=session。",
+    "如果没有选剧本而用户在回答想跑哪个模组/剧本，优先 route=session，并尽量直接给 sessionAction=select_story_pack + storyPackId；只有实在无法映射时才用 reply_to_prompt。",
+    "如果用户是在建卡、回答职业、要看人物卡，route=roll。",
+    "只有当 sessionMode=kp 且已经有当前调查员，用户明确是在场内行动、调查、交涉、潜行、跟踪、使用道具时，才 route=scene。",
+    "如果用户是在问“现在什么情况”“总结一下”“谁在场”，这属于 session 面板，不是 scene。",
+    "sceneIntent.actionKind 只能是 explore/talk/use_item/risky_action/steal/follow。",
+    "rollAction 只能是 traditional/quickfire/party_traditional/party_quickfire/sheet。",
+    "sessionAction 只能是 start/resume/new_line/pause/reply_to_prompt/list_saves/list_story_packs/select_story_pack/panel_state/panel_recap/panel_party。",
+    "如果你能把剧本映射到允许列表中的具体 storyPackId，就直接输出 select_story_pack，不要依赖固定口令。",
+    `允许 story packs：${storyPackList || "none"}`,
+    `允许 occupations：${occupationList || "none"}`,
+    "示例：",
+    '- “我想跑团” => route=session + sessionAction=start',
+    '- “旧教堂那个就行” => route=session + sessionAction=select_story_pack + storyPackId=old-church-arc-pack',
+    '- “记者吧” => route=roll + rollAction=traditional + occupationKey=journalist',
+    '- “给我快速医生卡” => route=roll + rollAction=quickfire + occupationKey=doctor',
+    '- “我看看我现在的人物卡” => route=roll + rollAction=sheet',
+    '- “我借着手电去看祭坛背后的刮痕” => route=scene + sceneIntent.actionKind=explore',
+    '- “你这个功能怎么配” => route=normal',
+  ].join(" ");
+
+  return await runJsonRouter({
+    cfg: params.cfg,
+    agentId: params.agentId,
+    onError: params.onError,
+    prompt,
+    input: {
+      text,
+      sessionMode: params.sessionMode ?? "idle",
+      hasSelectedStoryPack: params.hasSelectedStoryPack === true,
+      selectedStoryPackId: params.selectedStoryPackId ?? null,
+      pendingResumeChoice: params.pendingResumeChoice === true,
+      pendingStoryPackChoice: params.pendingStoryPackChoice === true,
+      hasCurrentInvestigator: params.hasCurrentInvestigator === true,
+      currentInvestigatorName: params.currentInvestigatorName ?? null,
+      currentInvestigatorOccupation: params.currentInvestigatorOccupation ?? null,
+      sceneSummary: params.sceneSummary ?? null,
+      sceneLocation: params.sceneLocation ?? null,
+      currentFocus: params.currentFocus ?? null,
+      revealedClues: params.revealedClues ?? [],
+      npcNames: params.npcNames ?? [],
+      areaNames: params.areaNames ?? [],
+      knownPlayerCount: typeof params.knownPlayerCount === "number" ? params.knownPlayerCount : 1,
+      storyPackOptions: params.storyPackOptions,
+      occupationOptions: params.occupationOptions,
+      channel: "onebot-dispatch-tool",
+    },
+    validate: (raw) =>
+      validateDispatchDecision(raw, {
+        storyPackIds: new Set(params.storyPackOptions.map((entry) => entry.id)),
+      }),
+    errorLabel: "dispatch router",
   });
 }

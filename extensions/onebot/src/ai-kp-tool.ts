@@ -1,6 +1,6 @@
-
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { createRequire } from "node:module";
+import path from "node:path";
 
 import { Type } from "@sinclair/typebox";
 import {
@@ -19,6 +19,7 @@ import {
   resolveOneBotAiKpConfig,
 } from "./ai-kp-context.js";
 import {
+  classifyOneBotAiKpDispatchRoute,
   classifyOneBotAiKpRollRoute,
   classifyOneBotAiKpSessionRoute,
 } from "./ai-kp-activation.js";
@@ -154,6 +155,8 @@ type SingleSessionModule = {
 type CoreModule = {
   submitAction: (...args: unknown[]) => unknown;
   listOccupationTemplates?: () => Array<{ key?: string; name?: string }>;
+  loadStoryPackTemplate?: (storyPackId: string) => Record<string, any>;
+  loadCampaignTemplate?: (campaignId: string) => Record<string, any>;
   processScenarioTurn: (
     sessionState: Record<string, any>,
     actorId: string,
@@ -213,6 +216,13 @@ type RollAction = (typeof ROLL_ACTIONS)[number];
 type HistorySection = (typeof HISTORY_SECTIONS)[number];
 type RoutedSessionAction = Exclude<SessionToolAction, "status" | "semantic_reply">;
 type RoutedRollAction = Exclude<RollAction, "semantic_reply">;
+
+type StoryPackOption = {
+  id: string;
+  title?: string | null;
+  campaignId?: string | null;
+  campaignTitle?: string | null;
+};
 
 function readStringArrayParam(params: Record<string, unknown>, key: string): string[] | undefined {
   const value = params[key];
@@ -691,6 +701,165 @@ function listOccupationOptions(modules: LoadedAiKpModules): Array<{ key: string;
     .filter((entry): entry is { key: string; name?: string | null } => Boolean(entry));
 }
 
+function listStoryPackOptions(cfg: ClawdbotConfig, modules: LoadedAiKpModules): StoryPackOption[] {
+  const baseDir = resolveOneBotAiKpBaseDir(cfg);
+  if (!baseDir) return [];
+  const storyPackDir = path.join(baseDir, "core", "data", "story-packs");
+  if (!existsSync(storyPackDir)) return [];
+
+  return readdirSync(storyPackDir)
+    .filter((fileName) => fileName.endsWith(".story-pack.json"))
+    .map((fileName) => {
+      const id = fileName.replace(/\.story-pack\.json$/i, "").trim();
+      if (!id) return null;
+      try {
+        const storyPack =
+          typeof modules.core.loadStoryPackTemplate === "function"
+            ? modules.core.loadStoryPackTemplate(id)
+            : null;
+        const campaignId =
+          typeof storyPack?.campaignId === "string" && storyPack.campaignId.trim()
+            ? storyPack.campaignId.trim()
+            : null;
+        const campaign =
+          campaignId && typeof modules.core.loadCampaignTemplate === "function"
+            ? modules.core.loadCampaignTemplate(campaignId)
+            : null;
+        return {
+          id,
+          title: typeof storyPack?.title === "string" ? storyPack.title.trim() : null,
+          campaignId,
+          campaignTitle: typeof campaign?.title === "string" ? campaign.title.trim() : null,
+        };
+      } catch {
+        return {
+          id,
+        };
+      }
+    })
+    .filter((entry): entry is StoryPackOption => Boolean(entry));
+}
+
+function listRevealedClueTitles(sessionState: Record<string, any>): string[] {
+  const clues = Array.isArray(sessionState.scene?.clues) ? sessionState.scene.clues : [];
+  return clues
+    .filter((clue: Record<string, any>) => clue?.revealed)
+    .map((clue: Record<string, any>) => (typeof clue?.title === "string" ? clue.title.trim() : ""))
+    .filter((title: string) => Boolean(title));
+}
+
+function listSceneNpcNames(sessionState: Record<string, any>): string[] {
+  const npcs = Array.isArray(sessionState.scene?.participants?.npcs) ? sessionState.scene.participants.npcs : [];
+  return npcs
+    .map((npc: Record<string, any>) => (typeof npc?.name === "string" ? npc.name.trim() : ""))
+    .filter((name: string) => Boolean(name));
+}
+
+function listSceneAreaNames(sessionState: Record<string, any>): string[] {
+  const areas = Array.isArray(sessionState.scene?.meta?.areas) ? sessionState.scene.meta.areas : [];
+  return areas
+    .flatMap((area: Record<string, any>) => {
+      const names = [];
+      if (typeof area?.name === "string" && area.name.trim()) names.push(area.name.trim());
+      if (typeof area?.description === "string" && area.description.trim()) names.push(area.description.trim());
+      if (Array.isArray(area?.notable)) {
+        for (const entry of area.notable) {
+          if (typeof entry === "string" && entry.trim()) names.push(entry.trim());
+        }
+      }
+      return names;
+    })
+    .filter((name: string) => Boolean(name));
+}
+
+function mapDispatchSessionActionToToolAction(params: {
+  action: string;
+  originalText: string;
+  storyPackId?: string;
+}): { action: RoutedSessionAction; panel?: PanelAction; value?: string } | null {
+  switch (params.action) {
+    case "start":
+      return { action: "start" };
+    case "resume":
+      return { action: "resume" };
+    case "new_line":
+      return { action: "new_line" };
+    case "pause":
+      return { action: "pause" };
+    case "reply_to_prompt":
+      return { action: "reply_to_prompt", value: params.originalText };
+    case "list_saves":
+      return { action: "list_saves" };
+    case "list_story_packs":
+      return { action: "list_story_packs" };
+    case "select_story_pack":
+      return params.storyPackId ? { action: "select_story_pack", value: params.storyPackId } : null;
+    case "panel_state":
+      return { action: "panel", panel: "state" };
+    case "panel_recap":
+      return { action: "panel", panel: "recap" };
+    case "panel_party":
+      return { action: "panel", panel: "party" };
+    default:
+      return null;
+  }
+}
+
+function unwrapJsonResultDetails(result: unknown): Record<string, unknown> | null {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return null;
+  const details = (result as { details?: unknown }).details;
+  if (!details || typeof details !== "object" || Array.isArray(details)) return null;
+  return details as Record<string, unknown>;
+}
+
+async function resolveSemanticDispatchDecision(params: {
+  runtime: ConversationRuntimeContext;
+  modules: LoadedAiKpModules;
+  agentId?: string | null;
+  originalText: string;
+  senderName?: string;
+}): Promise<{
+  decision: Awaited<ReturnType<typeof classifyOneBotAiKpDispatchRoute>>;
+  stateBundle: StateBundle;
+  actorId?: string;
+}> {
+  const seedEvent = buildSyntheticEvent(params.runtime, {
+    message: params.originalText,
+    rawMessage: params.originalText,
+    senderName: params.senderName,
+  });
+  const stateBundle = params.modules.singleSession.ensureConversationSession(seedEvent, {
+    storageRoot: params.runtime.aiKpConfig.storageRoot,
+  });
+  const actorId = stateBundle.meta.actorsByUserId?.[params.runtime.userId] as string | undefined;
+  const investigator = actorId ? stateBundle.sessionState.investigators?.[actorId] as Record<string, any> | undefined : undefined;
+  const decision = await classifyOneBotAiKpDispatchRoute({
+    cfg: params.runtime.cfg,
+    text: params.originalText,
+    agentId: params.agentId,
+    storyPackOptions: listStoryPackOptions(params.runtime.cfg, params.modules),
+    occupationOptions: listOccupationOptions(params.modules),
+    sessionMode: typeof stateBundle.meta.sessionMode === "string" ? stateBundle.meta.sessionMode : "idle",
+    hasSelectedStoryPack: Boolean(stateBundle.meta.storyPackId),
+    selectedStoryPackId: typeof stateBundle.meta.storyPackId === "string" ? stateBundle.meta.storyPackId : null,
+    pendingResumeChoice: Boolean(stateBundle.meta.pendingResumeChoice),
+    pendingStoryPackChoice: Boolean(stateBundle.meta.pendingStoryPackChoice),
+    hasCurrentInvestigator: Boolean(investigator),
+    currentInvestigatorName: typeof investigator?.name === "string" ? investigator.name : null,
+    currentInvestigatorOccupation: typeof investigator?.occupation === "string" ? investigator.occupation : null,
+    sceneSummary: typeof stateBundle.sessionState.scene?.summary === "string" ? stateBundle.sessionState.scene.summary : null,
+    sceneLocation: typeof stateBundle.sessionState.scene?.location === "string" ? stateBundle.sessionState.scene.location : null,
+    currentFocus: typeof stateBundle.meta.turnState?.currentActorName === "string"
+      ? stateBundle.meta.turnState.currentActorName
+      : null,
+    revealedClues: listRevealedClueTitles(stateBundle.sessionState),
+    npcNames: listSceneNpcNames(stateBundle.sessionState),
+    areaNames: listSceneAreaNames(stateBundle.sessionState),
+    knownPlayerCount: Array.isArray(stateBundle.meta.knownUsers) ? stateBundle.meta.knownUsers.length : 1,
+  });
+  return { decision, stateBundle, actorId };
+}
+
 function mapSemanticRollRouteToToolAction(params: {
   action: string;
   occupationKey?: string;
@@ -968,8 +1137,8 @@ async function executeSceneTurnTool(
   const runtime = await resolveConversationRuntimeContext(api, ctx);
   const modules = loadAiKpModules(runtime.cfg);
   const originalText = readStringParam(params, "originalText", { required: true });
-  const normalizedAction = readStringParam(params, "normalizedAction");
-  const semanticIntent: SemanticSceneIntent = {
+  let normalizedAction = readStringParam(params, "normalizedAction");
+  let semanticIntent: SemanticSceneIntent = {
     actionKind: readStringParam(params, "actionKind") as SemanticSceneIntent["actionKind"] | undefined,
     intentSummary: readStringParam(params, "intentSummary"),
     normalizedAction,
@@ -994,12 +1163,44 @@ async function executeSceneTurnTool(
     routineHints: readStringArrayParam(params, "routineHints"),
     environmentTags: readStringArrayParam(params, "environmentTags"),
   };
-  const hasStructuredIntent = Boolean(semanticIntent.actionKind);
-  if (!hasStructuredIntent && !normalizedAction?.trim()) {
-    throw new Error("scene_turn requires actionKind for semantic execution or normalizedAction for legacy fallback");
-  }
+  let hasStructuredIntent = Boolean(semanticIntent.actionKind);
   const actorSelector = readStringParam(params, "actorSelector");
   const senderName = readStringParam(params, "senderName");
+  let dispatchResolution: Awaited<ReturnType<typeof classifyOneBotAiKpDispatchRoute>> = null;
+  if (!hasStructuredIntent && !normalizedAction?.trim()) {
+    const resolved = await resolveSemanticDispatchDecision({
+      runtime,
+      modules,
+      agentId: ctx.agentId,
+      originalText,
+      senderName,
+    });
+    dispatchResolution = resolved.decision;
+    if (!dispatchResolution || dispatchResolution.route !== "scene" || !dispatchResolution.sceneIntent?.actionKind) {
+      const packet = await loadOneBotAiKpContextPacket({
+        cfg: runtime.cfg,
+        groupId: runtime.groupId,
+        userId: runtime.groupId ? undefined : runtime.userId,
+      });
+      return jsonResult({
+        ok: false,
+        action: "scene_turn",
+        noSceneAction: true,
+        shouldReplyVerbatim: false,
+        replyText: null,
+        reason: dispatchResolution?.reason ?? "scene_not_inferred",
+        dispatchResolution,
+        suggestedRoute: dispatchResolution?.route ?? null,
+        contextPacket: packet?.packet ?? null,
+      });
+    }
+    semanticIntent = {
+      ...semanticIntent,
+      ...dispatchResolution.sceneIntent,
+    };
+    normalizedAction = semanticIntent.normalizedAction ?? normalizedAction;
+    hasStructuredIntent = Boolean(semanticIntent.actionKind);
+  }
   const event = buildSyntheticEvent(runtime, {
     message: normalizedAction ?? semanticIntent.intentSummary ?? originalText,
     rawMessage: originalText,
@@ -1192,6 +1393,130 @@ async function executeSceneTurnTool(
     semanticIntent,
     resolvedAction: turn.action ?? null,
     matchedRuleId: resolvedSemanticAction?.matchedRuleId ?? null,
+    dispatchResolution,
+  });
+}
+
+async function executeDispatchTool(
+  api: ClawdbotPluginApi,
+  ctx: ClawdbotPluginToolContext,
+  params: Record<string, unknown>,
+) {
+  const runtime = await resolveConversationRuntimeContext(api, ctx);
+  const modules = loadAiKpModules(runtime.cfg);
+  const originalText = readStringParam(params, "originalText", { required: true });
+  const senderName = readStringParam(params, "senderName");
+  const resolved = await resolveSemanticDispatchDecision({
+    runtime,
+    modules,
+    agentId: ctx.agentId,
+    originalText,
+    senderName,
+  });
+  const decision = resolved.decision;
+
+  if (!decision || decision.route === "normal") {
+    const packet = await loadOneBotAiKpContextPacket({
+      cfg: runtime.cfg,
+      groupId: runtime.groupId,
+      userId: runtime.groupId ? undefined : runtime.userId,
+    });
+    return jsonResult({
+      ok: false,
+      action: "dispatch",
+      noDispatchAction: true,
+      shouldReplyVerbatim: false,
+      replyText: null,
+      reason: decision?.reason ?? "normal_chat",
+      dispatchResolution: decision,
+      contextPacket: packet?.packet ?? null,
+    });
+  }
+
+  if (decision.route === "session" && decision.sessionAction) {
+    const mapped = mapDispatchSessionActionToToolAction({
+      action: decision.sessionAction,
+      originalText,
+      storyPackId: decision.storyPackId,
+    });
+    if (!mapped) {
+      const packet = await loadOneBotAiKpContextPacket({
+        cfg: runtime.cfg,
+        groupId: runtime.groupId,
+        userId: runtime.groupId ? undefined : runtime.userId,
+      });
+      return jsonResult({
+        ok: false,
+        action: "dispatch",
+        noDispatchAction: true,
+        shouldReplyVerbatim: false,
+        replyText: null,
+        reason: "invalid_session_dispatch",
+        dispatchResolution: decision,
+        contextPacket: packet?.packet ?? null,
+      });
+    }
+    const child = await executeSessionTool(api, ctx, {
+      action: mapped.action,
+      panel: mapped.panel,
+      value: mapped.value,
+      originalText,
+      senderName,
+    });
+    return jsonResult({
+      ...(unwrapJsonResultDetails(child) ?? {}),
+      action: "dispatch",
+      routedTool: ONEBOT_AIKP_TOOL_NAMES.session,
+      dispatchRoute: decision.route,
+      dispatchResolution: decision,
+    });
+  }
+
+  if (decision.route === "roll" && decision.rollAction) {
+    const child = await executeRollTool(api, ctx, {
+      action: decision.rollAction,
+      occupationKey: decision.occupationKey,
+      originalText,
+      senderName,
+    });
+    return jsonResult({
+      ...(unwrapJsonResultDetails(child) ?? {}),
+      action: "dispatch",
+      routedTool: ONEBOT_AIKP_TOOL_NAMES.roll,
+      dispatchRoute: decision.route,
+      dispatchResolution: decision,
+    });
+  }
+
+  if (decision.route === "scene" && decision.sceneIntent?.actionKind) {
+    const child = await executeSceneTurnTool(api, ctx, {
+      originalText,
+      senderName,
+      ...decision.sceneIntent,
+    });
+    return jsonResult({
+      ...(unwrapJsonResultDetails(child) ?? {}),
+      action: "dispatch",
+      routedTool: ONEBOT_AIKP_TOOL_NAMES.sceneTurn,
+      dispatchRoute: decision.route,
+      dispatchResolution: decision,
+    });
+  }
+
+  const packet = await loadOneBotAiKpContextPacket({
+    cfg: runtime.cfg,
+    groupId: runtime.groupId,
+    userId: runtime.groupId ? undefined : runtime.userId,
+  });
+  return jsonResult({
+    ok: false,
+    action: "dispatch",
+    noDispatchAction: true,
+    shouldReplyVerbatim: false,
+    replyText: null,
+    reason: "dispatch_not_actionable",
+    dispatchResolution: decision,
+    contextPacket: packet?.packet ?? null,
   });
 }
 
@@ -1238,9 +1563,23 @@ export function createOneBotAiKpTools(api: ClawdbotPluginApi, ctx: ClawdbotPlugi
 
   return [
     {
+      name: ONEBOT_AIKP_TOOL_NAMES.dispatch,
+      description:
+        "Front door for natural-language AI-KP play in OneBot QQ conversations. Give it the player's original message first when they are starting/resuming a run, choosing a story pack, building a character, viewing a sheet, asking for state/recap/party panels, or taking an in-world action. It will semantically route to session, roll, or scene handling while local state rules still enforce legality.",
+      parameters: Type.Object({
+        originalText: Type.String({
+          description: "The player's original natural-language message that should be semantically routed.",
+        }),
+        senderName: Type.Optional(
+          Type.String({ description: "Optional player display name from the current OneBot message." }),
+        ),
+      }),
+      execute: async (_id: string, params: Record<string, unknown>) => await executeDispatchTool(api, ctx, params),
+    },
+    {
       name: ONEBOT_AIKP_TOOL_NAMES.session,
       description:
-        "Control AI-KP session state in OneBot QQ conversations. Use this when a user clearly wants to start, resume, pause, pick a story pack, inspect status/panels, or answer a pending resume/story-pack choice. Prefer action=semantic_reply when the user answered in natural language and you should infer the session-control meaning without forcing fixed phrases. If the user is just discussing AI-KP or asking general questions, do not call it.",
+        "Control AI-KP session state in OneBot QQ conversations. Prefer onebot_aikp_dispatch for raw player messages. Use this narrower tool when you already know the specific session action to perform, or when action=semantic_reply should infer a pending resume/story-pack/panel meaning without forcing fixed phrases.",
       parameters: Type.Object({
         action: stringEnum(SESSION_ACTIONS, { description: `Action to perform: ${SESSION_ACTIONS.join(", ")}` }),
         panel: Type.Optional(
@@ -1266,7 +1605,7 @@ export function createOneBotAiKpTools(api: ClawdbotPluginApi, ctx: ClawdbotPlugi
     {
       name: ONEBOT_AIKP_TOOL_NAMES.roll,
       description:
-        "Create or inspect investigator sheets in OneBot AI-KP conversations. Use this when the user wants to roll a traditional card, quickfire a card, batch-generate party cards, inspect their sheet, or answer a blocked chargen step naturally. Prefer action=semantic_reply when the player only names an occupation, asks for quick/traditional/party chargen in freeform language, or says they want to see the current sheet without fixed commands.",
+        "Create or inspect investigator sheets in OneBot AI-KP conversations. Prefer onebot_aikp_dispatch for raw player messages. Use this narrower tool when you already know the specific roll action, or when action=semantic_reply should infer a blocked chargen reply such as an occupation-only answer or a freeform quickfire request.",
       parameters: Type.Object({
         action: stringEnum(ROLL_ACTIONS, { description: `Action to perform: ${ROLL_ACTIONS.join(", ")}` }),
         occupationKey: Type.Optional(
@@ -1290,7 +1629,7 @@ export function createOneBotAiKpTools(api: ClawdbotPluginApi, ctx: ClawdbotPlugi
     {
       name: ONEBOT_AIKP_TOOL_NAMES.sceneTurn,
       description:
-        "Resolve an in-world AI-KP scene action after you have semantically understood the player's intent. Prefer structured semantic fields such as actionKind, skillKey, targetNpc, targetClue, or targetArea. Use normalizedAction only as a legacy fallback.",
+        "Resolve an in-world AI-KP scene action. Prefer onebot_aikp_dispatch for raw player messages. This tool also accepts originalText alone and can infer scene semantics when actionKind is omitted, while structured semantic fields remain the preferred precise path.",
       parameters: Type.Object({
         originalText: Type.String({ description: "The player's original natural-language message." }),
         actionKind: Type.Optional(

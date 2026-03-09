@@ -340,9 +340,10 @@ function buildFallbackOperationLines(context: AiKpContextPacket, limit: number):
 function buildActiveToolGuideLines(): string[] {
   return [
     `[Available Tools]`,
-    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: start/resume/pause the run, answer pending save/story-pack choices, inspect panels, move spotlight/turn order. For freeform answers such as “接昨晚那条” or “别续旧档了”，prefer action=semantic_reply instead of asking for fixed keywords.`,
-    `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: create or inspect investigator sheets when the player is building a character or wants to view the current sheet. For natural replies such as “记者吧”“给我快速医生卡”“大家一起车吧”，prefer action=semantic_reply instead of forcing rigid roll phrases.`,
-    `- ${ONEBOT_AIKP_TOOL_NAMES.sceneTurn}: resolve in-world actions semantically. Prefer structured fields such as actionKind/skillKey/targetNpc/targetClue/targetArea over keyword phrases.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.dispatch}: preferred front door for almost any direct player message. Give it the raw message first so it can route semantically into session/roll/scene handling without forcing rigid commands.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: narrower session-control tool for start/resume/pause, save/story-pack choices, panels, spotlight and turn order. For freeform answers such as “接昨晚那条” or “别续旧档了”，prefer action=semantic_reply if you are already deliberately using the session tool.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: narrower sheet/chargen tool. For natural replies such as “记者吧”“给我快速医生卡”“大家一起车吧”，prefer action=semantic_reply if you are already deliberately using the roll tool.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.sceneTurn}: narrower in-world action tool. It can infer scene semantics from originalText alone, but structured fields such as actionKind/skillKey/targetNpc/targetClue/targetArea remain the most precise path.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.history}: pull older summaries/chat/operations if compaction hid earlier context.`,
   ];
 }
@@ -365,9 +366,10 @@ function buildSessionMetaLines(meta?: AiKpMeta | null): string[] {
 function buildIdleToolGuideLines(): string[] {
   return [
     `[Available Tools]`,
-    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: start/resume/pause the TRPG session, pick saves/story packs, inspect status panels. Use action=semantic_reply when the player answered naturally and you should map it to resume/new-line/panel/list behavior.`,
-    `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: make or inspect investigator sheets. Use action=semantic_reply when the player naturally answers a chargen prompt, only names an occupation, or asks for quick/traditional/party chargen without fixed wording.`,
-    `- ${ONEBOT_AIKP_TOOL_NAMES.sceneTurn}: use only after the conversation is actually in an active TRPG scene.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.dispatch}: preferred front door for direct player messages. Use it first when the user might be starting a run, picking a story pack, building a card, asking for state, or taking an in-world action.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: narrower session-control tool. Use action=semantic_reply when the player answered naturally and you should map it to resume/new-line/panel/list behavior.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: narrower sheet tool. Use action=semantic_reply when the player naturally answers a chargen prompt, only names an occupation, or asks for quick/traditional/party chargen without fixed wording.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.sceneTurn}: use only after the conversation is actually in an active TRPG scene, or when dispatch already routed here.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.history}: read older AI-KP logs if you need compacted context.`,
   ];
 }
@@ -477,6 +479,7 @@ function buildIdleAiKpPromptBlock(params: {
   }
   lines.push(
     `If a tool result says a resume/new-line or story-pack choice is pending, ask that choice plainly and wait for the user's answer.`,
+    `For almost any direct player message about AI-KP play, use ${ONEBOT_AIKP_TOOL_NAMES.dispatch} first instead of hand-picking narrower tools.`,
     `When the user answers that pending question in natural language, use ${ONEBOT_AIKP_TOOL_NAMES.session} with action=semantic_reply instead of demanding exact words.`,
     `When a user answers the chargen step naturally, such as only naming an occupation or asking for quickfire in freeform text, use ${ONEBOT_AIKP_TOOL_NAMES.roll} with action=semantic_reply.`,
     `If the user is just discussing features, asking how AI-KP works, or chatting normally, answer without AI-KP tools.`,

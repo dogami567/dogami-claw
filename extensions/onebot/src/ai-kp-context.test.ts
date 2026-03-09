@@ -123,6 +123,7 @@ describe("loadOneBotAiKpContext", () => {
     expect(result?.promptBlock).toContain("[Persona]");
     expect(result?.promptBlock).toContain("[Player Context]");
     expect(result?.promptBlock).toContain("[Available Tools]");
+    expect(result?.promptBlock).toContain("onebot_aikp_dispatch");
     expect(result?.promptBlock).toContain("Scene: 旧教堂夜访");
     expect(result?.promptBlock).toContain("Round: 3");
     expect(result?.promptBlock).toContain("Session mode: kp");
@@ -135,6 +136,7 @@ describe("loadOneBotAiKpContext", () => {
     expect(result?.promptBlock).toContain("action=semantic_reply");
     expect(result?.promptBlock).toContain("续上");
     expect(result?.promptBlock).toContain("记者吧");
+    expect(result?.promptBlock).toContain("preferred front door");
     expect(result?.promptBlock).not.toContain("[Raw Log Paths]");
   });
 
@@ -166,12 +168,14 @@ describe("loadOneBotAiKpContext", () => {
     expect(result?.promptBlock).toContain("[Persona]");
     expect(result?.promptBlock).toContain("[Player Context]");
     expect(result?.promptBlock).toContain("[Available Tools]");
+    expect(result?.promptBlock).toContain("onebot_aikp_dispatch");
     expect(result?.promptBlock).toContain("TRPG session is currently idle");
     expect(result?.promptBlock).toContain("Pending choice: resume current save or start a new line.");
     expect(result?.promptBlock).toContain("onebot_aikp_session");
     expect(result?.promptBlock).toContain("onebot_aikp_roll");
     expect(result?.promptBlock).toContain("action=semantic_reply");
     expect(result?.promptBlock).toContain("chargen step");
+    expect(result?.promptBlock).toContain("use onebot_aikp_dispatch first");
   });
 });
 
