@@ -119,16 +119,21 @@ describe("loadOneBotAiKpContext", () => {
 
     expect(result?.active).toBe(true);
     expect(result?.promptBlock).toContain("<onebot_ai_kp_context>");
+    expect(result?.promptBlock).toContain("[Persona]");
+    expect(result?.promptBlock).toContain("[Player Context]");
+    expect(result?.promptBlock).toContain("[Available Tools]");
     expect(result?.promptBlock).toContain("Scene: 旧教堂夜访");
     expect(result?.promptBlock).toContain("Round: 3");
     expect(result?.promptBlock).toContain("[Recent Summary]");
     expect(result?.promptBlock).toContain("[Recent Operations]");
     expect(result?.promptBlock).toContain("[Recent Chat]");
     expect(result?.promptBlock).toContain("Context file:");
+    expect(result?.promptBlock).toContain("onebot_aikp_scene_turn");
+    expect(result?.promptBlock).toContain("onebot_aikp_history");
     expect(result?.promptBlock).not.toContain("[Raw Log Paths]");
   });
 
-  it("reports inactive when the AI-KP session is idle", async () => {
+  it("injects a short idle prompt block when semantic tools are enabled", async () => {
     const storageRoot = await mkdtemp(path.join(os.tmpdir(), "onebot-aikp-"));
     tempDirs.push(storageRoot);
     const conversationKey = "onebot-group-974862433";
@@ -148,7 +153,12 @@ describe("loadOneBotAiKpContext", () => {
       sessionMode: "idle",
       conversationKey,
     });
-    expect(result?.promptBlock).toBeUndefined();
+    expect(result?.promptBlock).toContain("[Persona]");
+    expect(result?.promptBlock).toContain("[Player Context]");
+    expect(result?.promptBlock).toContain("[Available Tools]");
+    expect(result?.promptBlock).toContain("TRPG session is currently idle");
+    expect(result?.promptBlock).toContain("onebot_aikp_session");
+    expect(result?.promptBlock).toContain("onebot_aikp_roll");
   });
 });
 

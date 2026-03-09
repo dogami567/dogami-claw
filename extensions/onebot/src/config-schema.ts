@@ -15,6 +15,7 @@ export const OneBotAiKpConfigSchema = z
     storageRoot: z.string().optional(),
     runtimeModulePath: z.string().optional(),
     delegateToRuntime: z.boolean().optional(),
+    semanticToolsEnabled: z.boolean().optional(),
     allowDirectMessages: z.boolean().optional(),
     allowNaturalActivation: z.boolean().optional(),
     bypassMentionWhenActive: z.boolean().optional(),

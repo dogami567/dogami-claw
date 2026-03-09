@@ -12,5 +12,13 @@ describe("onebotChannelConfigSchema", () => {
         aiKp: expect.any(Object),
       }),
     });
+    expect(
+      (
+        (onebotChannelConfigSchema.schema.properties as Record<string, any>).aiKp.properties as Record<
+          string,
+          unknown
+        >
+      ).semanticToolsEnabled,
+    ).toBeTruthy();
   });
 });

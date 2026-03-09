@@ -296,7 +296,7 @@ async function processInboundMessage(params: {
 
     const aiKpConfig = resolveOneBotAiKpConfig(cfg);
     const groupConfig = helpers.resolveGroupConfig(groupId ?? "");
-    if (aiKpConfig.bypassMentionWhenActive) {
+    if (aiKpConfig.semanticToolsEnabled || aiKpConfig.bypassMentionWhenActive) {
       aiKpContext = await loadOneBotAiKpContext({
         cfg,
         groupId,
@@ -325,7 +325,7 @@ async function processInboundMessage(params: {
     effectiveWasMentioned = mentionGate.effectiveWasMentioned;
     groupSystemPrompt = mergeOneBotGroupSystemPrompt([
       groupConfig.systemPrompt,
-      aiKpContext?.active ? aiKpContext.promptBlock : undefined,
+      aiKpContext?.promptBlock,
     ]);
 
     if (core.channel.commands.isControlCommandMessage(rawBody, cfg) && commandAuthorized !== true) {
@@ -333,19 +333,21 @@ async function processInboundMessage(params: {
       return;
     }
 
-    const aiKpHandled = await maybeHandleOneBotAiKpRuntime({
-      cfg,
-      envelope: evt,
-      wasMentioned: effectiveWasMentioned,
-      isGroup: true,
-      cleanedText: rawBody,
-      agentId: route.agentId,
-      sendText: helpers.sendText,
-      statusSink,
-      onError: logVerbose,
-    });
-    if (aiKpHandled?.handled) {
-      return;
+    if (!aiKpConfig.semanticToolsEnabled) {
+      const aiKpHandled = await maybeHandleOneBotAiKpRuntime({
+        cfg,
+        envelope: evt,
+        wasMentioned: effectiveWasMentioned,
+        isGroup: true,
+        cleanedText: rawBody,
+        agentId: route.agentId,
+        sendText: helpers.sendText,
+        statusSink,
+        onError: logVerbose,
+      });
+      if (aiKpHandled?.handled) {
+        return;
+      }
     }
 
     aiKpContext =
@@ -357,7 +359,7 @@ async function processInboundMessage(params: {
       }));
     groupSystemPrompt = mergeOneBotGroupSystemPrompt([
       groupConfig.systemPrompt,
-      aiKpContext?.active ? aiKpContext.promptBlock : undefined,
+      aiKpContext?.promptBlock,
     ]);
   } else {
     if (dmPolicy === "disabled") return;

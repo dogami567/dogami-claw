@@ -3,8 +3,8 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { joinPromptBlocks, type ClawdbotConfig } from "clawdbot/plugin-sdk";
+import { ONEBOT_AIKP_PROMPT_TAG, ONEBOT_AIKP_TOOL_NAMES } from "./ai-kp-shared.js";
 
-const AI_KP_PROMPT_TAG = "onebot_ai_kp_context";
 const DEFAULT_SUMMARY_CHUNK_LIMIT = 1;
 const DEFAULT_RECENT_CHAT_LIMIT = 6;
 const DEFAULT_RECENT_OPERATION_LIMIT = 6;
@@ -49,11 +49,14 @@ type AiKpContextPacket = {
   recentOperations?: Array<Record<string, unknown>>;
 };
 
+export type OneBotAiKpContextPacket = AiKpContextPacket;
+
 export type OneBotAiKpConfig = {
   enabled?: boolean;
   storageRoot?: string;
   runtimeModulePath?: string;
   delegateToRuntime?: boolean;
+  semanticToolsEnabled?: boolean;
   allowDirectMessages?: boolean;
   allowNaturalActivation?: boolean;
   bypassMentionWhenActive?: boolean;
@@ -74,6 +77,7 @@ export type ResolvedOneBotAiKpConfig = {
   storageRoot?: string;
   runtimeModulePath?: string;
   delegateToRuntime: boolean;
+  semanticToolsEnabled: boolean;
   allowDirectMessages: boolean;
   allowNaturalActivation: boolean;
   bypassMentionWhenActive: boolean;
@@ -158,6 +162,23 @@ function resolveDefaultRuntimeModulePath(cfg: ClawdbotConfig): string | undefine
   return existsSync(modulePath) ? modulePath : undefined;
 }
 
+export function resolveOneBotAiKpBaseDir(cfg: ClawdbotConfig): string | undefined {
+  const raw = resolveOneBotAiKpRawConfig(cfg);
+  if (raw.storageRoot?.trim()) {
+    const fromStorageRoot = path.resolve(raw.storageRoot.trim(), "..", "..");
+    if (existsSync(path.join(fromStorageRoot, "adapter", "onebot", "single-session.js"))) {
+      return fromStorageRoot;
+    }
+  }
+  if (raw.runtimeModulePath?.trim()) {
+    const fromRuntimeModule = path.resolve(raw.runtimeModulePath.trim(), "..", "..", "..");
+    if (existsSync(path.join(fromRuntimeModule, "adapter", "onebot", "single-session.js"))) {
+      return fromRuntimeModule;
+    }
+  }
+  return resolveDefaultAiKpBaseDir(cfg);
+}
+
 export function resolveOneBotAiKpConfig(cfg: ClawdbotConfig): ResolvedOneBotAiKpConfig {
   const raw = resolveOneBotAiKpRawConfig(cfg);
   return {
@@ -165,6 +186,7 @@ export function resolveOneBotAiKpConfig(cfg: ClawdbotConfig): ResolvedOneBotAiKp
     storageRoot: raw.storageRoot?.trim() || resolveDefaultStorageRoot(cfg),
     runtimeModulePath: raw.runtimeModulePath?.trim() || resolveDefaultRuntimeModulePath(cfg),
     delegateToRuntime: raw.delegateToRuntime !== false,
+    semanticToolsEnabled: raw.semanticToolsEnabled !== false,
     allowDirectMessages: raw.allowDirectMessages === true,
     allowNaturalActivation: raw.allowNaturalActivation !== false,
     bypassMentionWhenActive: raw.bypassMentionWhenActive === true,
@@ -312,6 +334,26 @@ function buildFallbackOperationLines(context: AiKpContextPacket, limit: number):
   );
 }
 
+function buildActiveToolGuideLines(): string[] {
+  return [
+    `[Available Tools]`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: start/resume/pause the run, answer pending save/story-pack choices, inspect panels, move spotlight/turn order.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: create or inspect investigator sheets when the player is building a character or wants to view the current sheet.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.sceneTurn}: resolve in-world actions semantically. Prefer structured fields such as actionKind/skillKey/targetNpc/targetClue/targetArea over keyword phrases.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.history}: pull older summaries/chat/operations if compaction hid earlier context.`,
+  ];
+}
+
+function buildIdleToolGuideLines(): string[] {
+  return [
+    `[Available Tools]`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: start/resume/pause the TRPG session, pick saves/story packs, inspect status panels.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: make or inspect investigator sheets.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.sceneTurn}: use only after the conversation is actually in an active TRPG scene.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.history}: read older AI-KP logs if you need compacted context.`,
+  ];
+}
+
 function buildAiKpPromptBlock(params: {
   conversationKey: string;
   contextFile: string;
@@ -340,16 +382,21 @@ function buildAiKpPromptBlock(params: {
   const chatLines =
     recentChat.length > 0 ? recentChat : buildFallbackChatLines(context ?? {}, params.config.recentChatLimit);
 
-  const lines = [
-    `AI-KP mode is active for this OneBot conversation. Continue the TRPG session instead of acting like a generic assistant.`,
-  ];
+  const lines = [`[Persona]`, `AI-KP mode is active for this OneBot conversation.`];
 
   const runtimePrompt = compactRuntimePrompt(context?.runtimePrompt);
   if (runtimePrompt) {
-    lines.push(`Runtime guidance: ${runtimePrompt}`);
+    lines.push(runtimePrompt);
+  } else {
+    lines.push(
+      `You are 麦麦, the AI KP for this TRPG table. Stay cute, colloquial, and in-character instead of sounding like a generic assistant.`,
+    );
   }
 
-  lines.push(`Conversation key: ${params.conversationKey}`);
+  lines.push(
+    `Keep the current run going naturally. Prefer taking semantic action with AI-KP tools over asking players to memorize rigid commands.`,
+  );
+  lines.push("", "[Player Context]", `Conversation key: ${params.conversationKey}`);
 
   const scene = normalizeLine(state?.scene?.summary);
   if (scene) lines.push(`Scene: ${scene}`);
@@ -383,7 +430,62 @@ function buildAiKpPromptBlock(params: {
     lines.push("", `Context file: ${params.contextFile}`);
   }
 
-  return `<${AI_KP_PROMPT_TAG}>\n${lines.join("\n").trim()}\n</${AI_KP_PROMPT_TAG}>`;
+  lines.push("", ...buildActiveToolGuideLines());
+  lines.push(`If the injected summary is insufficient after compaction, call ${ONEBOT_AIKP_TOOL_NAMES.history} before replying.`);
+
+  return `<${ONEBOT_AIKP_PROMPT_TAG}>\n${lines.join("\n").trim()}\n</${ONEBOT_AIKP_PROMPT_TAG}>`;
+}
+
+function buildIdleAiKpPromptBlock(params: {
+  conversationKey: string;
+  contextFile: string;
+  config: ResolvedOneBotAiKpConfig;
+}): string {
+  const lines = [
+    `[Persona]`,
+    `You are 麦麦. AI-KP tooling is available for this OneBot conversation, but the TRPG session is currently idle.`,
+    `When the user clearly wants to start/resume/pause a run, build a card, or perform an in-world action, switch into AI-KP behavior with tools. Otherwise keep chatting normally.`,
+    "",
+    "[Player Context]",
+    `Conversation key: ${params.conversationKey}`,
+  ];
+  if (params.config.includeLogHint) {
+    lines.push(`Context file: ${params.contextFile}`);
+  }
+  lines.push(
+    `If a tool result says a resume/new-line or story-pack choice is pending, ask that choice plainly and wait for the user's answer.`,
+    `If the user is just discussing features, asking how AI-KP works, or chatting normally, answer without AI-KP tools.`,
+    "",
+    ...buildIdleToolGuideLines(),
+  );
+  return `<${ONEBOT_AIKP_PROMPT_TAG}>\n${lines.join("\n").trim()}\n</${ONEBOT_AIKP_PROMPT_TAG}>`;
+}
+
+export async function loadOneBotAiKpContextPacket(params: {
+  cfg: ClawdbotConfig;
+  groupId?: string | null;
+  userId?: string | null;
+  onError?: (message: string) => void;
+}): Promise<{
+  conversationKey: string;
+  contextFile: string;
+  metaFile: string;
+  packet: AiKpContextPacket | null;
+} | null> {
+  const config = resolveOneBotAiKpConfig(params.cfg);
+  if (!config.enabled || !config.storageRoot) return null;
+  const conversationKey = buildConversationKey({
+    groupId: params.groupId,
+    userId: params.userId,
+  });
+  if (!conversationKey) return null;
+  const layout = buildConversationLayout(config.storageRoot, conversationKey);
+  return {
+    conversationKey,
+    contextFile: layout.contextFile,
+    metaFile: layout.metaFile,
+    packet: await readJsonFile<AiKpContextPacket>(layout.contextFile, params.onError),
+  };
 }
 
 export async function loadOneBotAiKpContext(params: {
@@ -412,6 +514,13 @@ export async function loadOneBotAiKpContext(params: {
       sessionMode,
       conversationKey,
       contextFile: layout.contextFile,
+      promptBlock: config.semanticToolsEnabled
+        ? buildIdleAiKpPromptBlock({
+            conversationKey,
+            contextFile: layout.contextFile,
+            config,
+          })
+        : undefined,
     };
   }
 
