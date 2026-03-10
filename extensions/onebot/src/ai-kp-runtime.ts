@@ -108,10 +108,11 @@ function buildSyntheticEnvelope(params: {
 const requireForRuntime = createRequire(import.meta.url);
 const runtimeModuleCache = new Map<string, AiKpRuntimeModule>();
 const DEFAULT_ONEBOT_TEXT_CHUNK_LIMIT = 4000;
+const runtimeConversationLocks = new Map<string, Promise<void>>();
 
 function buildReplyPreview(text: string): string {
   const normalized = text.replace(/\r?\n/g, "\\n");
-  return normalized.length > 96 ? `${normalized.slice(0, 96)}?` : normalized;
+  return normalized.length > 96 ? `${normalized.slice(0, 96)}…` : normalized;
 }
 
 function resolveAiKpTextChunkLimit(cfg: ClawdbotConfig): number {
@@ -238,6 +239,41 @@ function resolveAiKpTarget(params: {
   return null;
 }
 
+function resolveAiKpConversationKey(envelope: OneBotMessageEvent): string | null {
+  if (envelope.message_type === "group" && envelope.group_id != null) {
+    return `group:${String(envelope.group_id)}`;
+  }
+  if (envelope.user_id != null) {
+    return `user:${String(envelope.user_id)}`;
+  }
+  return null;
+}
+
+async function withAiKpConversationLock<T>(
+  queueKey: string | null,
+  task: () => Promise<T>,
+): Promise<T> {
+  if (!queueKey) return task();
+
+  const previous = runtimeConversationLocks.get(queueKey) ?? Promise.resolve();
+  let releaseCurrent!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseCurrent = resolve;
+  });
+  const current = previous.catch(() => undefined).then(() => gate);
+  runtimeConversationLocks.set(queueKey, current);
+  await previous.catch(() => undefined);
+
+  try {
+    return await task();
+  } finally {
+    releaseCurrent();
+    if (runtimeConversationLocks.get(queueKey) === current) {
+      runtimeConversationLocks.delete(queueKey);
+    }
+  }
+}
+
 export async function maybeHandleOneBotAiKpRuntime(params: {
   cfg: ClawdbotConfig;
   envelope: OneBotMessageEvent;
@@ -260,86 +296,90 @@ export async function maybeHandleOneBotAiKpRuntime(params: {
   if (!config.enabled || !config.delegateToRuntime || !config.runtimeModulePath) return null;
   if (!params.isGroup && !config.allowDirectMessages) return null;
   if (params.isGroup && !params.wasMentioned) return null;
+  const queueKey = resolveAiKpConversationKey(params.envelope);
 
-  const runtimeModule = loadAiKpRuntimeModule(config.runtimeModulePath, params.onError);
-  if (!runtimeModule) return null;
+  // Same-group AI-KP turns share one runtime state snapshot, so keep them in-order per conversation.
+  return withAiKpConversationLock(queueKey, async () => {
+    const runtimeModule = loadAiKpRuntimeModule(config.runtimeModulePath, params.onError);
+    if (!runtimeModule) return null;
 
-  let result = runtimeModule.handleOneBotEnvelope(params.envelope, {
-    storageRoot: config.storageRoot,
-    includeContextPacket: true,
-    allowDirectMessages: config.allowDirectMessages,
-    allowNaturalActivation: config.allowNaturalActivation,
-  });
-  if (result?.ignored && config.activationRouterEnabled) {
-    const classifyActivationIntent = params.classifyActivationIntent ?? classifyOneBotAiKpActivation;
-    const decision = await classifyActivationIntent({
-      cfg: params.cfg,
-      text:
-        params.cleanedText?.trim() ||
-        String(params.envelope.raw_message ?? params.envelope.message ?? "").trim(),
-      agentId: params.agentId,
-      hasExistingContext:
-        typeof result.contextRef === "string" && result.contextRef.length > 0
-          ? existsSync(result.contextRef)
-          : false,
-      onError: params.onError,
+    let result = runtimeModule.handleOneBotEnvelope(params.envelope, {
+      storageRoot: config.storageRoot,
+      includeContextPacket: true,
+      allowDirectMessages: config.allowDirectMessages,
+      allowNaturalActivation: config.allowNaturalActivation,
     });
-    if (decision && decision.action !== "normal" && result.reason === "inactive_group_session") {
-      const syntheticEnvelope = buildSyntheticEnvelope({
-        envelope: params.envelope,
-        cleanedText: params.cleanedText,
-        decision,
+    if (result?.ignored && config.activationRouterEnabled) {
+      const classifyActivationIntent = params.classifyActivationIntent ?? classifyOneBotAiKpActivation;
+      const decision = await classifyActivationIntent({
+        cfg: params.cfg,
+        text:
+          params.cleanedText?.trim() ||
+          String(params.envelope.raw_message ?? params.envelope.message ?? "").trim(),
+        agentId: params.agentId,
+        hasExistingContext:
+          typeof result.contextRef === "string" && result.contextRef.length > 0
+            ? existsSync(result.contextRef)
+            : false,
+        onError: params.onError,
       });
-      result = runtimeModule.handleOneBotEnvelope(syntheticEnvelope, {
-        storageRoot: config.storageRoot,
-        includeContextPacket: true,
-        allowDirectMessages: config.allowDirectMessages,
-        allowNaturalActivation: config.allowNaturalActivation,
-      });
-    }
-  }
-  if (!result || result.ignored) {
-    return {
-      handled: false,
-      reason: result?.reason ?? null,
-      contextRef: result?.contextRef ?? null,
-      contextPacket: result?.contextPacket,
-      routing: result?.routing,
-    };
-  }
-
-  const replyText = typeof result.replyText === "string" ? result.replyText : "";
-  const deliveryPlan = await resolveAiKpReplyDeliveryPlan({
-    cfg: params.cfg,
-    replyText,
-  });
-  const target = resolveAiKpTarget({ result, envelope: params.envelope });
-  if (deliveryPlan.replySegments.length > 0 && target) {
-    for (const [index, segment] of deliveryPlan.replySegments.entries()) {
-      try {
-        await params.sendText({ target, text: segment });
-        params.statusSink?.({ lastOutboundAt: Date.now() });
-      } catch (error) {
-        const segmentLabel =
-          deliveryPlan.replyMode === "segments"
-            ? `reply segment ${index + 1}/${deliveryPlan.replySegments.length}`
-            : "reply";
-        params.onError?.(
-          `onebot ai-kp: failed sending ${segmentLabel} to ${target}: ${String(error)} preview="${buildReplyPreview(segment)}"`,
-        );
-        throw error;
+      if (decision && decision.action !== "normal" && result.reason === "inactive_group_session") {
+        const syntheticEnvelope = buildSyntheticEnvelope({
+          envelope: params.envelope,
+          cleanedText: params.cleanedText,
+          decision,
+        });
+        result = runtimeModule.handleOneBotEnvelope(syntheticEnvelope, {
+          storageRoot: config.storageRoot,
+          includeContextPacket: true,
+          allowDirectMessages: config.allowDirectMessages,
+          allowNaturalActivation: config.allowNaturalActivation,
+        });
       }
     }
-  }
+    if (!result || result.ignored) {
+      return {
+        handled: false,
+        reason: result?.reason ?? null,
+        contextRef: result?.contextRef ?? null,
+        contextPacket: result?.contextPacket,
+        routing: result?.routing,
+      };
+    }
 
-  return {
-    handled: true,
-    replyText: replyText || null,
-    replySegments: deliveryPlan.replySegments,
-    replyMode: deliveryPlan.replyMode,
-    reason: result.reason ?? null,
-    contextRef: result.contextRef ?? null,
-    contextPacket: result.contextPacket,
-    routing: result.routing,
-  };
+    const replyText = typeof result.replyText === "string" ? result.replyText : "";
+    const deliveryPlan = await resolveAiKpReplyDeliveryPlan({
+      cfg: params.cfg,
+      replyText,
+    });
+    const target = resolveAiKpTarget({ result, envelope: params.envelope });
+    if (deliveryPlan.replySegments.length > 0 && target) {
+      for (const [index, segment] of deliveryPlan.replySegments.entries()) {
+        try {
+          await params.sendText({ target, text: segment });
+          params.statusSink?.({ lastOutboundAt: Date.now() });
+        } catch (error) {
+          const segmentLabel =
+            deliveryPlan.replyMode === "segments"
+              ? `reply segment ${index + 1}/${deliveryPlan.replySegments.length}`
+              : "reply";
+          params.onError?.(
+            `onebot ai-kp: failed sending ${segmentLabel} to ${target}: ${String(error)} preview="${buildReplyPreview(segment)}"`,
+          );
+          throw error;
+        }
+      }
+    }
+
+    return {
+      handled: true,
+      replyText: replyText || null,
+      replySegments: deliveryPlan.replySegments,
+      replyMode: deliveryPlan.replyMode,
+      reason: result.reason ?? null,
+      contextRef: result.contextRef ?? null,
+      contextPacket: result.contextPacket,
+      routing: result.routing,
+    };
+  });
 }
