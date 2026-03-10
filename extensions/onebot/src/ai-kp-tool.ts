@@ -144,6 +144,47 @@ type SingleSessionModule = {
     selector?: string,
   ) => { actorId?: string | null } | null;
   setCurrentActor: (stateBundle: StateBundle, actorId: string) => unknown;
+  resolveSceneActionChoice: (
+    stateBundle: StateBundle,
+    actorId: string,
+    originalText: string,
+    action: Record<string, any>,
+  ) => {
+    action?: Record<string, any>;
+    reply?: string;
+    pendingChoice?: Record<string, any>;
+  };
+  handlePendingSceneActionChoice: (
+    text: string,
+    stateBundle: StateBundle,
+  ) => {
+    action?: Record<string, any>;
+    reply?: string;
+    passThrough?: boolean;
+    selectedOption?: Record<string, any>;
+    result?: Record<string, any>;
+    beforeSessionState?: Record<string, any>;
+  } | null;
+  handlePendingSceneActionChoiceWithOptions: (
+    text: string,
+    stateBundle: StateBundle,
+    options?: Record<string, unknown>,
+  ) => {
+    action?: Record<string, any>;
+    reply?: string;
+    passThrough?: boolean;
+    selectedOption?: Record<string, any>;
+    result?: Record<string, any>;
+    beforeSessionState?: Record<string, any>;
+  } | null;
+  buildPostCheckChoice: (
+    stateBundle: StateBundle,
+    action: Record<string, any>,
+    turnResult: Record<string, any>,
+    beforeSessionState: Record<string, any>,
+    investigator?: Record<string, any>,
+  ) => Record<string, any> | null;
+  formatSceneActionChoiceReply: (pendingChoice: Record<string, any>, options?: Record<string, unknown>) => string;
   formatStateSummary: (sessionState: Record<string, any>, meta?: Record<string, any>) => string;
   formatPartySummary: (stateBundle: StateBundle) => string;
   formatTurnReply: (result: Record<string, any>, extras?: Record<string, unknown>) => string;
@@ -458,7 +499,71 @@ function buildOperationEvent(kind: string, summary: string, payload: Record<stri
   };
 }
 
-function buildStateSnapshot(stateBundle: StateBundle): Record<string, unknown> {
+function getPendingInvestigatorDraftForRuntimeUser(meta: Record<string, any>, userId?: string | null) {
+  const draftMap =
+    meta.pendingInvestigatorDraftsByUserId && typeof meta.pendingInvestigatorDraftsByUserId === "object"
+      ? (meta.pendingInvestigatorDraftsByUserId as Record<string, any>)
+      : {};
+  const resolvedUserId = typeof userId === "string" && userId.trim() ? userId.trim() : null;
+  if (resolvedUserId && draftMap[resolvedUserId] && typeof draftMap[resolvedUserId] === "object") {
+    return draftMap[resolvedUserId] as Record<string, any>;
+  }
+  const legacyDraft =
+    meta.pendingInvestigatorDraft && typeof meta.pendingInvestigatorDraft === "object"
+      ? (meta.pendingInvestigatorDraft as Record<string, any>)
+      : null;
+  if (!resolvedUserId) return legacyDraft;
+  if (!legacyDraft) return null;
+  const legacyOwnerUserId =
+    legacyDraft.ownerUserId != null && String(legacyDraft.ownerUserId).trim()
+      ? String(legacyDraft.ownerUserId).trim()
+      : null;
+  if (legacyOwnerUserId === resolvedUserId) return legacyDraft;
+  return !legacyOwnerUserId && Object.keys(draftMap).length === 0 ? legacyDraft : null;
+}
+
+function listRuntimePartyMembers(meta: Record<string, any>, sessionState: Record<string, any>) {
+  const roster =
+    meta.partyRosterByUserId && typeof meta.partyRosterByUserId === "object"
+      ? (meta.partyRosterByUserId as Record<string, any>)
+      : {};
+  const entries = Object.values(roster)
+    .filter((member) => member && typeof member === "object" && typeof member.userId === "string")
+    .sort((left: any, right: any) => {
+      const leftTime = typeof left.joinedAt === "string" ? left.joinedAt : "";
+      const rightTime = typeof right.joinedAt === "string" ? right.joinedAt : "";
+      if (leftTime && rightTime && leftTime !== rightTime) return leftTime.localeCompare(rightTime);
+      return String(left.userId).localeCompare(String(right.userId));
+    });
+  if (entries.length > 0) return entries;
+
+  const actorMap =
+    meta.actorsByUserId && typeof meta.actorsByUserId === "object"
+      ? (meta.actorsByUserId as Record<string, any>)
+      : {};
+  const knownUsers = Array.isArray(meta.knownUsers) ? meta.knownUsers : [];
+  return Object.entries(actorMap).map(([userId, actorId]) => {
+    const name =
+      knownUsers.find((item: any) => String(item?.userId ?? "").trim() === String(userId).trim())?.name ??
+      `玩家${userId}`;
+    return {
+      userId: String(userId),
+      userName: String(name),
+      status: sessionState.investigators?.[String(actorId)] ? "ready" : "joined",
+      investigatorId: String(actorId),
+    };
+  });
+}
+
+function inferRuntimePartyMode(meta: Record<string, any>, sessionState: Record<string, any>) {
+  const readyCount = listRuntimePartyMembers(meta, sessionState).filter((member: any) => {
+    const actorId = typeof member?.investigatorId === "string" ? member.investigatorId.trim() : "";
+    return actorId && sessionState.investigators?.[actorId];
+  }).length;
+  return readyCount >= 2 ? "group" : "solo";
+}
+
+function buildStateSnapshot(stateBundle: StateBundle, userId?: string | null): Record<string, unknown> {
   const turnState = (stateBundle.meta.turnState as Record<string, any> | undefined) ?? {
     actorOrder: [],
     currentActorId: null,
@@ -467,11 +572,8 @@ function buildStateSnapshot(stateBundle: StateBundle): Record<string, unknown> {
   const currentActor = turnState.currentActorId
     ? stateBundle.sessionState.investigators?.[turnState.currentActorId]
     : null;
-  const pendingDraft =
-    stateBundle.meta.pendingInvestigatorDraft &&
-    typeof stateBundle.meta.pendingInvestigatorDraft === "object"
-      ? (stateBundle.meta.pendingInvestigatorDraft as Record<string, any>)
-      : null;
+  const pendingDraft = getPendingInvestigatorDraftForRuntimeUser(stateBundle.meta as Record<string, any>, userId);
+  const partyMembers = listRuntimePartyMembers(stateBundle.meta as Record<string, any>, stateBundle.sessionState);
   return {
     updatedAt: new Date().toISOString(),
     conversationKey: stateBundle.layout.conversationKey,
@@ -479,6 +581,31 @@ function buildStateSnapshot(stateBundle: StateBundle): Record<string, unknown> {
     runtimeProfileId: stateBundle.meta.runtimeProfileId || "maimai-kp-v1",
     summaryState: structuredClone(stateBundle.meta.summaryState || {}),
     knownUsers: structuredClone(stateBundle.meta.knownUsers || []),
+    party: {
+      mode: inferRuntimePartyMode(stateBundle.meta as Record<string, any>, stateBundle.sessionState),
+      locked: Boolean((stateBundle.meta as Record<string, any>).partyLockedAt),
+      lockedAt:
+        typeof (stateBundle.meta as Record<string, any>).partyLockedAt === "string"
+          ? (stateBundle.meta as Record<string, any>).partyLockedAt
+          : null,
+      memberCount: partyMembers.length,
+      members: partyMembers.map((member: any) => {
+        const actorId =
+          typeof member?.investigatorId === "string" && member.investigatorId.trim()
+            ? member.investigatorId.trim()
+            : null;
+        const investigator = actorId ? stateBundle.sessionState.investigators?.[actorId] : null;
+        return {
+          userId: typeof member?.userId === "string" ? member.userId : null,
+          userName: typeof member?.userName === "string" ? member.userName : null,
+          status: typeof member?.status === "string" ? member.status : (investigator ? "ready" : "joined"),
+          actorId,
+          investigatorName: investigator?.name ?? null,
+          occupation: investigator?.occupation ?? null,
+          isCurrent: Boolean(actorId && actorId === turnState.currentActorId),
+        };
+      }),
+    },
     turnState: {
       actorOrder: [...(turnState.actorOrder || [])],
       currentActorId: turnState.currentActorId,
@@ -556,7 +683,7 @@ function persistConversationArtifacts(params: {
   stateBundle.meta.updatedAt = new Date().toISOString();
   modules.singleSession.saveMeta(stateBundle.layout, stateBundle.meta);
 
-  let stateSnapshot = buildStateSnapshot(stateBundle);
+  let stateSnapshot = buildStateSnapshot(stateBundle, event.user_id != null ? String(event.user_id) : null);
   const summaryChunk = modules.logStore.maybeRollupSummaries(stateBundle.layout, stateBundle.meta, stateSnapshot, {});
   if (summaryChunk?.chunkName) {
     modules.logStore.appendOperationLog(
@@ -566,7 +693,7 @@ function persistConversationArtifacts(params: {
         pendingChatCount: summaryChunk.pendingChatCount ?? 0,
       }),
     );
-    stateSnapshot = buildStateSnapshot(stateBundle);
+    stateSnapshot = buildStateSnapshot(stateBundle, event.user_id != null ? String(event.user_id) : null);
   }
 
   modules.logStore.writeStateSnapshot(stateBundle.layout, stateSnapshot);
@@ -606,18 +733,25 @@ function buildSessionStatus(params: {
   const event = buildSyntheticEvent(params.runtime, { message: "status" });
   const layout = params.modules.singleSession.buildStorageLayout(params.runtime.aiKpConfig.storageRoot!, event);
   const meta = params.modules.singleSession.loadMeta(layout) ?? {};
+  const pendingDraft = getPendingInvestigatorDraftForRuntimeUser(meta, params.runtime.userId);
   const replyLines = [`当前模式：${meta.sessionMode || "idle"}`, `当前会话：${layout.conversationKey}`];
+  if (meta.pendingSessionBriefing) {
+    replyLines.push("当前待确认：开团说明 / 开始建卡");
+  }
   if (meta.pendingResumeChoice) {
     replyLines.push("当前待确认：续旧档 / 新开线");
+  }
+  if (meta.pendingDeleteChoice?.saveId) {
+    replyLines.push(`当前待确认：是否删除存档 ${String(meta.pendingDeleteChoice.saveId)}`);
   }
   if (meta.pendingStoryPackChoice) {
     replyLines.push("当前待确认：选择剧本");
   }
-  if (meta.pendingInvestigatorDraft?.stage) {
+  if (pendingDraft?.stage) {
     replyLines.push(
-      `当前待确认：建卡 ${String(meta.pendingInvestigatorDraft.stage)} 阶段${
-        meta.pendingInvestigatorDraft.occupationName || meta.pendingInvestigatorDraft.occupationKey
-          ? `（${meta.pendingInvestigatorDraft.occupationName || meta.pendingInvestigatorDraft.occupationKey}）`
+      `当前待确认：建卡 ${String(pendingDraft.stage)} 阶段${
+        pendingDraft.occupationName || pendingDraft.occupationKey
+          ? `（${pendingDraft.occupationName || pendingDraft.occupationKey}）`
           : ""
       }`,
     );
@@ -642,9 +776,11 @@ function buildSessionStatus(params: {
     conversationKey: layout.conversationKey,
     replyText: replyLines.join("\n"),
     shouldReplyVerbatim: false,
+    pendingSessionBriefing: meta.pendingSessionBriefing ?? null,
     pendingResumeChoice: meta.pendingResumeChoice ?? null,
+    pendingDeleteChoice: meta.pendingDeleteChoice ?? null,
     pendingStoryPackChoice: meta.pendingStoryPackChoice ?? null,
-    pendingInvestigatorDraft: meta.pendingInvestigatorDraft ?? null,
+    pendingInvestigatorDraft: pendingDraft ?? null,
     storyPackId: meta.storyPackId ?? null,
   };
 }
@@ -697,6 +833,7 @@ async function resolveSemanticSessionAction(params: {
   const stateBundle = params.modules.singleSession.ensureConversationSession(seedEvent, {
     storageRoot: params.runtime.aiKpConfig.storageRoot,
   });
+  const partyMembers = listRuntimePartyMembers(stateBundle.meta as Record<string, any>, stateBundle.sessionState);
   const hasExistingContext =
     existsSync(stateBundle.layout.sessionFile) ||
     (Array.isArray(stateBundle.meta.archiveHistory) && stateBundle.meta.archiveHistory.length > 0);
@@ -705,8 +842,13 @@ async function resolveSemanticSessionAction(params: {
     text: params.originalText,
     agentId: params.agentId,
     sessionMode: typeof stateBundle.meta.sessionMode === "string" ? stateBundle.meta.sessionMode : "idle",
+    pendingSessionBriefing: Boolean(stateBundle.meta.pendingSessionBriefing),
     pendingResumeChoice: Boolean(stateBundle.meta.pendingResumeChoice),
+    pendingDeleteChoice: Boolean(stateBundle.meta.pendingDeleteChoice),
     pendingStoryPackChoice: Boolean(stateBundle.meta.pendingStoryPackChoice),
+    partyMode: inferRuntimePartyMode(stateBundle.meta as Record<string, any>, stateBundle.sessionState),
+    partyLocked: Boolean((stateBundle.meta as Record<string, any>).partyLockedAt),
+    partyMemberCount: partyMembers.length,
     hasExistingContext,
   });
   const routed = decision
@@ -862,12 +1004,18 @@ async function resolveSemanticDispatchDecision(params: {
   const stateBundle = params.modules.singleSession.ensureConversationSession(seedEvent, {
     storageRoot: params.runtime.aiKpConfig.storageRoot,
   });
+  const partyMembers = listRuntimePartyMembers(stateBundle.meta as Record<string, any>, stateBundle.sessionState);
   const actorId = stateBundle.meta.actorsByUserId?.[params.runtime.userId] as string | undefined;
   const investigator = actorId ? stateBundle.sessionState.investigators?.[actorId] as Record<string, any> | undefined : undefined;
   const pendingDraft =
     stateBundle.meta.pendingInvestigatorDraft &&
     typeof stateBundle.meta.pendingInvestigatorDraft === "object"
       ? (stateBundle.meta.pendingInvestigatorDraft as Record<string, any>)
+      : null;
+  const pendingSceneChoice =
+    stateBundle.meta.pendingSceneActionChoice &&
+    typeof stateBundle.meta.pendingSceneActionChoice === "object"
+      ? (stateBundle.meta.pendingSceneActionChoice as Record<string, any>)
       : null;
   const decision = await classifyOneBotAiKpDispatchRoute({
     cfg: params.runtime.cfg,
@@ -878,12 +1026,30 @@ async function resolveSemanticDispatchDecision(params: {
     sessionMode: typeof stateBundle.meta.sessionMode === "string" ? stateBundle.meta.sessionMode : "idle",
     hasSelectedStoryPack: Boolean(stateBundle.meta.storyPackId),
     selectedStoryPackId: typeof stateBundle.meta.storyPackId === "string" ? stateBundle.meta.storyPackId : null,
+    pendingSessionBriefing: Boolean(stateBundle.meta.pendingSessionBriefing),
     pendingResumeChoice: Boolean(stateBundle.meta.pendingResumeChoice),
+    pendingDeleteChoice: Boolean(stateBundle.meta.pendingDeleteChoice),
     pendingStoryPackChoice: Boolean(stateBundle.meta.pendingStoryPackChoice),
     pendingInvestigatorDraftStage:
       typeof pendingDraft?.stage === "string" ? pendingDraft.stage : null,
     pendingInvestigatorDraftOccupationKey:
       typeof pendingDraft?.occupationKey === "string" ? pendingDraft.occupationKey : null,
+    pendingSceneChoice: Boolean(pendingSceneChoice?.kind),
+    pendingSceneChoiceKind:
+      typeof pendingSceneChoice?.kind === "string" ? pendingSceneChoice.kind : null,
+    pendingSceneChoiceTargetNpc:
+      typeof pendingSceneChoice?.targetNpcName === "string" ? pendingSceneChoice.targetNpcName : null,
+    pendingSceneChoiceOptions: Array.isArray(pendingSceneChoice?.options)
+      ? pendingSceneChoice.options
+        .map((item) => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object" && typeof (item as { displayLabel?: unknown }).displayLabel === "string") {
+            return (item as { displayLabel: string }).displayLabel;
+          }
+          return null;
+        })
+        .filter((item): item is string => Boolean(item))
+      : [],
     hasCurrentInvestigator: Boolean(investigator),
     currentInvestigatorName: typeof investigator?.name === "string" ? investigator.name : null,
     currentInvestigatorOccupation: typeof investigator?.occupation === "string" ? investigator.occupation : null,
@@ -895,7 +1061,10 @@ async function resolveSemanticDispatchDecision(params: {
     revealedClues: listRevealedClueTitles(stateBundle.sessionState),
     npcNames: listSceneNpcNames(stateBundle.sessionState),
     areaNames: listSceneAreaNames(stateBundle.sessionState),
-    knownPlayerCount: Array.isArray(stateBundle.meta.knownUsers) ? stateBundle.meta.knownUsers.length : 1,
+    knownPlayerCount: partyMembers.length || (Array.isArray(stateBundle.meta.knownUsers) ? stateBundle.meta.knownUsers.length : 1),
+    partyMode: inferRuntimePartyMode(stateBundle.meta as Record<string, any>, stateBundle.sessionState),
+    partyLocked: Boolean((stateBundle.meta as Record<string, any>).partyLockedAt),
+    partyMemberCount: partyMembers.length,
   });
   return { decision, stateBundle, actorId };
 }
@@ -941,7 +1110,8 @@ async function resolveSemanticRollAction(params: {
   });
   const occupationOptions = listOccupationOptions(params.modules);
   const actorId = stateBundle.meta.actorsByUserId?.[params.runtime.userId] as string | undefined;
-  const knownPlayerCount = Array.isArray(stateBundle.meta.knownUsers) ? stateBundle.meta.knownUsers.length : 1;
+  const partyMembers = listRuntimePartyMembers(stateBundle.meta as Record<string, any>, stateBundle.sessionState);
+  const knownPlayerCount = partyMembers.length || (Array.isArray(stateBundle.meta.knownUsers) ? stateBundle.meta.knownUsers.length : 1);
   const pendingDraft =
     stateBundle.meta.pendingInvestigatorDraft &&
     typeof stateBundle.meta.pendingInvestigatorDraft === "object"
@@ -953,12 +1123,16 @@ async function resolveSemanticRollAction(params: {
     occupationOptions,
     agentId: params.agentId,
     sessionMode: typeof stateBundle.meta.sessionMode === "string" ? stateBundle.meta.sessionMode : "idle",
+    pendingSessionBriefing: Boolean(stateBundle.meta.pendingSessionBriefing),
     hasCurrentInvestigator: Boolean(actorId && stateBundle.sessionState.investigators?.[actorId]),
     pendingInvestigatorDraftStage:
       typeof pendingDraft?.stage === "string" ? pendingDraft.stage : null,
     pendingInvestigatorDraftOccupationKey:
       typeof pendingDraft?.occupationKey === "string" ? pendingDraft.occupationKey : null,
     knownPlayerCount,
+    partyMode: inferRuntimePartyMode(stateBundle.meta as Record<string, any>, stateBundle.sessionState),
+    partyLocked: Boolean((stateBundle.meta as Record<string, any>).partyLockedAt),
+    partyMemberCount: partyMembers.length,
   });
   const routed = decision
     ? mapSemanticRollRouteToToolAction({
@@ -1239,42 +1413,8 @@ async function executeSceneTurnTool(
   const actorSelector = readStringParam(params, "actorSelector");
   const senderName = readStringParam(params, "senderName");
   let dispatchResolution: Awaited<ReturnType<typeof classifyOneBotAiKpDispatchRoute>> = null;
-  if (!hasStructuredIntent && !normalizedAction?.trim()) {
-    const resolved = await resolveSemanticDispatchDecision({
-      runtime,
-      modules,
-      agentId: ctx.agentId,
-      originalText,
-      senderName,
-    });
-    dispatchResolution = resolved.decision;
-    if (!dispatchResolution || dispatchResolution.route !== "scene" || !dispatchResolution.sceneIntent?.actionKind) {
-      const packet = await loadOneBotAiKpContextPacket({
-        cfg: runtime.cfg,
-        groupId: runtime.groupId,
-        userId: runtime.groupId ? undefined : runtime.userId,
-      });
-      return jsonResult({
-        ok: false,
-        action: "scene_turn",
-        noSceneAction: true,
-        shouldReplyVerbatim: false,
-        replyText: null,
-        reason: dispatchResolution?.reason ?? "scene_not_inferred",
-        dispatchResolution,
-        suggestedRoute: dispatchResolution?.route ?? null,
-        contextPacket: packet?.packet ?? null,
-      });
-    }
-    semanticIntent = {
-      ...semanticIntent,
-      ...dispatchResolution.sceneIntent,
-    };
-    normalizedAction = semanticIntent.normalizedAction ?? normalizedAction;
-    hasStructuredIntent = Boolean(semanticIntent.actionKind);
-  }
   const event = buildSyntheticEvent(runtime, {
-    message: normalizedAction ?? semanticIntent.intentSummary ?? originalText,
+    message: normalizedAction ?? originalText,
     rawMessage: originalText,
     senderName,
   });
@@ -1282,12 +1422,32 @@ async function executeSceneTurnTool(
     storageRoot: runtime.aiKpConfig.storageRoot,
   });
 
-  if (stateBundle.meta.pendingResumeChoice || stateBundle.meta.pendingStoryPackChoice) {
+  if (stateBundle.meta.pendingResumeChoice || stateBundle.meta.pendingDeleteChoice || stateBundle.meta.pendingStoryPackChoice) {
     return jsonResult({
       ok: false,
       action: "scene_turn",
       needsSessionChoice: true,
-      replyText: "这边还有续档/选剧本没确认，先把那个选项收掉，我再替你落场内动作。",
+      replyText: "这边还有会话确认没收掉，先把续档/删档/选剧本这些选项处理完，我再替你落场内动作。",
+      shouldReplyVerbatim: true,
+    });
+  }
+
+  if (stateBundle.meta.pendingSessionBriefing) {
+    return jsonResult({
+      ok: false,
+      action: "scene_turn",
+      needsSessionChoice: true,
+      replyText: "开团前说明这边还没确认完。你先回一句“开始建卡”或者直接报职业，我再往下接场内动作。",
+      shouldReplyVerbatim: true,
+    });
+  }
+
+  if (stateBundle.meta.pendingInvestigatorDraft?.stage) {
+    return jsonResult({
+      ok: false,
+      action: "scene_turn",
+      needsRollAction: true,
+      replyText: "这张卡还没锁住。先把资料 / 装备 / 锁卡这一步收掉，我再正式接场内动作。",
       shouldReplyVerbatim: true,
     });
   }
@@ -1355,7 +1515,118 @@ async function executeSceneTurnTool(
     | ReturnType<typeof buildSemanticSceneAction>
     | null = null;
 
-  if (hasStructuredIntent) {
+  if (stateBundle.meta.pendingSceneActionChoice) {
+    const pendingChoice = modules.singleSession.handlePendingSceneActionChoiceWithOptions(originalText, stateBundle, {
+      submitAction: modules.core.submitAction,
+      randomInt: defaultRandomInt,
+    });
+    if (pendingChoice?.reply) {
+      const replyText = pendingChoice.reply;
+      const contextPacket = persistConversationArtifacts({
+        modules,
+        config: runtime.aiKpConfig,
+        stateBundle,
+        event,
+        inboundText: originalText,
+        replyText,
+        operationEvents: [],
+      });
+      return jsonResult({
+        ok: false,
+        action: "scene_turn",
+        actorId,
+        originalText,
+        replyText,
+        shouldReplyVerbatim: true,
+        contextPacket,
+        reason: "pending_scene_action_choice",
+        needsSceneChoice: true,
+      });
+    }
+    if (pendingChoice?.action) {
+      const beforePendingTurnState =
+        pendingChoice.beforeSessionState && typeof pendingChoice.beforeSessionState === "object"
+          ? (pendingChoice.beforeSessionState as Record<string, any>)
+          : beforeSessionState;
+      turn = {
+        ok: true,
+        action: pendingChoice.action,
+        result: (pendingChoice.result ?? modules.core.submitAction(
+          stateBundle.sessionState,
+          pendingChoice.action,
+          defaultRandomInt,
+        )) as Record<string, any>,
+      };
+      const investigatorAfterPending = stateBundle.sessionState.investigators?.[actorId] as Record<string, any> | undefined;
+      const postCheckChoice = modules.singleSession.buildPostCheckChoice(
+        stateBundle,
+        pendingChoice.action,
+        turn.result,
+        beforePendingTurnState,
+        investigatorAfterPending,
+      );
+      if (postCheckChoice) {
+        const replyText = modules.singleSession.formatSceneActionChoiceReply(postCheckChoice);
+        const contextPacket = persistConversationArtifacts({
+          modules,
+          config: runtime.aiKpConfig,
+          stateBundle,
+          event,
+          inboundText: originalText,
+          replyText,
+          operationEvents: [],
+        });
+        return jsonResult({
+          ok: false,
+          action: "scene_turn",
+          actorId,
+          originalText,
+          replyText,
+          shouldReplyVerbatim: true,
+          contextPacket,
+          reason: "pending_scene_action_choice",
+          needsSceneChoice: true,
+        });
+      }
+    }
+  }
+
+  if (!turn && !hasStructuredIntent && !normalizedAction?.trim()) {
+    const resolved = await resolveSemanticDispatchDecision({
+      runtime,
+      modules,
+      agentId: ctx.agentId,
+      originalText,
+      senderName,
+    });
+    dispatchResolution = resolved.decision;
+    if (!dispatchResolution || dispatchResolution.route !== "scene" || !dispatchResolution.sceneIntent?.actionKind) {
+      const packet = await loadOneBotAiKpContextPacket({
+        cfg: runtime.cfg,
+        groupId: runtime.groupId,
+        userId: runtime.groupId ? undefined : runtime.userId,
+      });
+      return jsonResult({
+        ok: false,
+        action: "scene_turn",
+        noSceneAction: true,
+        shouldReplyVerbatim: false,
+        replyText: null,
+        reason: dispatchResolution?.reason ?? "scene_not_inferred",
+        dispatchResolution,
+        suggestedRoute: dispatchResolution?.route ?? null,
+        contextPacket: packet?.packet ?? null,
+      });
+    }
+    semanticIntent = {
+      ...semanticIntent,
+      ...dispatchResolution.sceneIntent,
+    };
+    normalizedAction = semanticIntent.normalizedAction ?? normalizedAction;
+    hasStructuredIntent = Boolean(semanticIntent.actionKind);
+  }
+
+  if (!turn && hasStructuredIntent) {
     const investigator = stateBundle.sessionState.investigators?.[actorId] as Record<string, any> | undefined;
     if (!investigator) {
       turn = {
@@ -1378,32 +1649,93 @@ async function executeSceneTurnTool(
             "这句场内动作我还没拿到完整的结构化意图。需要先确定 actionKind，再补目标/NPC/技能这些关键字段。",
         };
       } else {
-        const requiredSkill = resolvedSemanticAction.action.skillKey
+        const choiceResolution = modules.singleSession.resolveSceneActionChoice(
+          stateBundle,
+          actorId,
+          originalText,
+          resolvedSemanticAction.action,
+        );
+        if (choiceResolution?.reply) {
+          const replyText = choiceResolution.reply;
+          const contextPacket = persistConversationArtifacts({
+            modules,
+            config: runtime.aiKpConfig,
+            stateBundle,
+            event,
+            inboundText: originalText,
+            replyText,
+            operationEvents: [],
+          });
+          return jsonResult({
+            ok: false,
+            action: "scene_turn",
+            actorId,
+            originalText,
+            replyText,
+            shouldReplyVerbatim: true,
+            contextPacket,
+            reason: "pending_scene_action_choice",
+            needsSceneChoice: true,
+          });
+        }
+
+        const effectiveAction = choiceResolution?.action ?? resolvedSemanticAction.action;
+        const requiredSkill = effectiveAction.skillKey
           ? investigator.skills?.find(
-              (item: Record<string, any>) => item.key === resolvedSemanticAction?.action?.skillKey,
+              (item: Record<string, any>) => item.key === effectiveAction.skillKey,
             ) ?? null
           : null;
-        if (resolvedSemanticAction.action.skillKey && !requiredSkill) {
+        if (effectiveAction.skillKey && !requiredSkill) {
           turn = {
             ok: false,
             reason: "missing_skill",
-            action: resolvedSemanticAction.action,
-            reply: `我听懂你想做什么了，但这名调查员现在卡里没有 ${resolvedSemanticAction.action.skillKey}，这一步我还不能稳稳落。`,
+            action: effectiveAction,
+            reply: `我听懂你想做什么了，但这名调查员现在卡里没有 ${effectiveAction.skillKey}，这一步我还不能稳稳落。`,
           };
         } else {
           turn = {
             ok: true,
-            action: resolvedSemanticAction.action,
+            action: effectiveAction,
             result: modules.core.submitAction(
               stateBundle.sessionState,
-              resolvedSemanticAction.action,
+              effectiveAction,
               defaultRandomInt,
             ) as Record<string, any>,
           };
+          const postCheckChoice = modules.singleSession.buildPostCheckChoice(
+            stateBundle,
+            effectiveAction,
+            turn.result,
+            beforeSessionState,
+            investigator,
+          );
+          if (postCheckChoice) {
+            const replyText = modules.singleSession.formatSceneActionChoiceReply(postCheckChoice);
+            const contextPacket = persistConversationArtifacts({
+              modules,
+              config: runtime.aiKpConfig,
+              stateBundle,
+              event,
+              inboundText: originalText,
+              replyText,
+              operationEvents: [],
+            });
+            return jsonResult({
+              ok: false,
+              action: "scene_turn",
+              actorId,
+              originalText,
+              replyText,
+              shouldReplyVerbatim: true,
+              contextPacket,
+              reason: "pending_scene_action_choice",
+              needsSceneChoice: true,
+            });
+          }
         }
       }
     }
-  } else {
+  } else if (!turn) {
     turn = modules.core.processScenarioTurn(
       stateBundle.sessionState,
       actorId,
@@ -1412,6 +1744,46 @@ async function executeSceneTurnTool(
       defaultRandomInt,
     );
   }
+
+  if (turn.ok && turn.action && turn.result) {
+    const currentInvestigator = stateBundle.sessionState.investigators?.[actorId] as Record<string, any> | undefined;
+    const postCheckChoice = modules.singleSession.buildPostCheckChoice(
+      stateBundle,
+      turn.action,
+      turn.result,
+      beforeSessionState,
+      currentInvestigator,
+    );
+    if (postCheckChoice) {
+      const replyText = modules.singleSession.formatSceneActionChoiceReply(postCheckChoice);
+      const contextPacket = persistConversationArtifacts({
+        modules,
+        config: runtime.aiKpConfig,
+        stateBundle,
+        event,
+        inboundText: originalText,
+        replyText,
+        operationEvents: [],
+      });
+      return jsonResult({
+        ok: false,
+        action: "scene_turn",
+        actorId,
+        normalizedAction: normalizedAction ?? null,
+        originalText,
+        replyText,
+        shouldReplyVerbatim: true,
+        contextPacket,
+        reason: "pending_scene_action_choice",
+        semanticIntent,
+        resolvedAction: turn.action ?? null,
+        matchedRuleId: resolvedSemanticAction?.matchedRuleId ?? null,
+        dispatchResolution,
+        needsSceneChoice: true,
+      });
+    }
+  }
+
   const replyText =
     turn.ok && turn.result
       ? modules.singleSession.formatTurnReply(turn.result, {
@@ -1632,6 +2004,7 @@ export function createOneBotAiKpTools(api: ClawdbotPluginApi, ctx: ClawdbotPlugi
   if (!ctx.sessionKey?.trim()) return null;
   const config = resolveOneBotAiKpConfig(api.config as ClawdbotConfig);
   if (!config.enabled || !config.semanticToolsEnabled || !config.storageRoot) return null;
+  if (!resolveOneBotAiKpBaseDir(api.config as ClawdbotConfig)) return null;
 
   return [
     {

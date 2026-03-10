@@ -101,11 +101,12 @@ async function enterChargenPrompt(byName: Record<string, any>) {
     originalText: "那就跑旧教堂",
     senderName: "Dogami",
   });
-  expect(pack.details.replyText).toContain("你现在还没车卡");
+  expect(pack.details.replyText).toContain("开团前先对一下边界");
+  expect(pack.details.replyText).toContain("开始建卡");
 }
 
 afterEach(async () => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -200,7 +201,7 @@ describe("onebot_aikp_roll semantic_reply", () => {
     expect(rolled.details.replyText).toContain("Dogami｜医生");
   });
 
-  it("routes party chargen replies to the party roll action", async () => {
+  it("routes party chargen replies into the roster-aware party setup flow", async () => {
     classifyOneBotAiKpRollRouteMock.mockResolvedValueOnce({
       action: "party_quickfire",
       confidence: 0.95,
@@ -223,8 +224,8 @@ describe("onebot_aikp_roll semantic_reply", () => {
     });
     expect(rolled.details.occupationKey).toBe("detective");
     expect(rolled.details.usedMessage).toBe("/aikp party-quickfire detective");
-    expect(rolled.details.replyText).toContain("快速车卡");
-    expect(rolled.details.replyText).toContain("Dogami");
+    expect(rolled.details.replyText).toContain("我先把你记进这轮名单了");
+    expect(rolled.details.replyText).toContain("其他要参团的人也直接");
   });
 
   it("routes freeform sheet requests to the sheet action", async () => {

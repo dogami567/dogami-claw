@@ -521,7 +521,12 @@ export async function classifyOneBotAiKpSessionRoute(params: {
   text: string;
   agentId?: string | null;
   sessionMode?: string | null;
+  partyMode?: string | null;
+  partyLocked?: boolean;
+  partyMemberCount?: number;
+  pendingSessionBriefing?: boolean;
   pendingResumeChoice?: boolean;
+  pendingDeleteChoice?: boolean;
   pendingStoryPackChoice?: boolean;
   hasExistingContext?: boolean;
   onError?: (message: string) => void;
@@ -548,7 +553,10 @@ export async function classifyOneBotAiKpSessionRoute(params: {
     "panel_recap：用户要你回顾、总结一下目前剧情。",
     "panel_party：用户要看队伍、谁在场、当前角色情况。",
     "normal：普通聊天、功能讨论、问配置、问怎么用，不该走 AI-KP 会话动作。",
+    "群里像“算我一个”“我先旁观”“就这些人”“解锁队伍”这类 roster 管理语句，也属于 session；优先 reply_to_prompt，不要判 normal。",
+    "如果 pendingSessionBriefing=true，像“好”“继续”“开始建卡”这种泛确认优先选 reply_to_prompt；如果只是想重看这段说明，也还是 reply_to_prompt。",
     "如果 pendingResumeChoice=true，优先在 resume / new_line / list_saves 之间判断；只有用户确实没表态，才选 reply_to_prompt。",
+    "如果 pendingDeleteChoice=true，说明上一句在等删档确认；此时像“确认删除”“删掉吧”“算了别删”“先看看列表”都优先在 reply_to_prompt / list_saves 之间判断。",
     "如果 pendingStoryPackChoice=true，用户在说想跑哪个剧本、模组名、'就那个第一个' 之类时，优先选 reply_to_prompt；如果是在要列表，再选 list_story_packs。",
     "如果用户只是说 '好'、'行'、'继续' 但没有足够信息，选 reply_to_prompt，不要乱猜。",
     "示例：",
@@ -556,6 +564,8 @@ export async function classifyOneBotAiKpSessionRoute(params: {
     "- “别续旧档，重新开吧” => new_line",
     "- “先让我看看有哪些存档” => list_saves",
     "- “旧教堂那个就行” => reply_to_prompt",
+    "- “算我一个” => reply_to_prompt",
+    "- “就这些人，开吧” => reply_to_prompt",
     "- “现在什么情况” => panel_state",
     "- “总结一下刚才发生了什么” => panel_recap",
     "- “现在谁在场” => panel_party",
@@ -570,7 +580,12 @@ export async function classifyOneBotAiKpSessionRoute(params: {
     input: {
       text,
       sessionMode: params.sessionMode ?? "idle",
+      partyMode: params.partyMode ?? "solo",
+      partyLocked: params.partyLocked === true,
+      partyMemberCount: typeof params.partyMemberCount === "number" ? params.partyMemberCount : 0,
+      pendingSessionBriefing: params.pendingSessionBriefing === true,
       pendingResumeChoice: params.pendingResumeChoice === true,
+      pendingDeleteChoice: params.pendingDeleteChoice === true,
       pendingStoryPackChoice: params.pendingStoryPackChoice === true,
       hasExistingContext: params.hasExistingContext === true,
       channel: "onebot-session-tool",
@@ -586,6 +601,10 @@ export async function classifyOneBotAiKpRollRoute(params: {
   occupationOptions: Array<{ key: string; name?: string | null }>;
   agentId?: string | null;
   sessionMode?: string | null;
+  partyMode?: string | null;
+  partyLocked?: boolean;
+  partyMemberCount?: number;
+  pendingSessionBriefing?: boolean;
   hasCurrentInvestigator?: boolean;
   pendingInvestigatorDraftStage?: string | null;
   pendingInvestigatorDraftOccupationKey?: string | null;
@@ -613,11 +632,17 @@ export async function classifyOneBotAiKpRollRoute(params: {
     "party_quickfire：多人一起快速车卡。",
     "sheet：用户想查看自己当前的人物卡/调查员卡。",
     "normal：这句不是建卡/看卡动作。",
+    "如果 pendingSessionBriefing=true，但用户已经明确给了职业、快速车卡或建卡要求，也还是判成建卡回复；只有泛确认才不归这里。",
     "如果 pendingInvestigatorDraftStage=occupation，说明属性已经掷完，当前更像是在等职业；此时像“记者吧”“医生”“算了给我快速医生卡”都还是建卡回复。",
     "如果 pendingInvestigatorDraftStage=skills，说明职业已经定了，当前更像是在等信用评级/技能偏好；此时像“信用20，侦查图书馆心理学”“自动分配”都应该判成 traditional，而不是 normal。",
+    "如果 pendingInvestigatorDraftStage=profile，用户在补名字/年龄/外观/动机；这也属于 traditional 的自然回复。",
+    "如果 pendingInvestigatorDraftStage=gear，用户在补携带物或说默认继续；这也属于 traditional 的自然回复。",
+    "如果 pendingInvestigatorDraftStage=lock，用户在说“锁卡”“开场”“改资料”“改装备”；这也属于 traditional 的自然回复。",
     "如果用户只是回答一个职业，例如“记者吧”“医生”，默认判成 traditional，并给出对应 occupationKey。",
     "如果用户提到“快速”“快车卡”，优先 quickfire / party_quickfire。",
     "如果用户提到“大家一起”“全员”“一次全车”，优先 party_traditional / party_quickfire。",
+    "如果是在群里补 roster、锁名单、退团，而不是实际建卡，不要判到这里。",
+    "party_traditional / party_quickfire 只在明确是当前名单多人一起建卡时再选；单人默认还是 traditional / quickfire。",
     "如果用户是在要看当前角色卡、调查员卡、人物卡，选 sheet。",
     "occupationKey 必须尽量从允许列表里选；如果没有明确职业，可以留空。",
     `允许职业：${occupationList}`,
@@ -637,6 +662,10 @@ export async function classifyOneBotAiKpRollRoute(params: {
     input: {
       text,
       sessionMode: params.sessionMode ?? "idle",
+      partyMode: params.partyMode ?? "solo",
+      partyLocked: params.partyLocked === true,
+      partyMemberCount: typeof params.partyMemberCount === "number" ? params.partyMemberCount : 0,
+      pendingSessionBriefing: params.pendingSessionBriefing === true,
       hasCurrentInvestigator: params.hasCurrentInvestigator === true,
       pendingInvestigatorDraftStage: params.pendingInvestigatorDraftStage ?? null,
       pendingInvestigatorDraftOccupationKey: params.pendingInvestigatorDraftOccupationKey ?? null,
@@ -674,12 +703,21 @@ export async function classifyOneBotAiKpDispatchRoute(params: {
   occupationOptions: Array<{ key: string; name?: string | null }>;
   agentId?: string | null;
   sessionMode?: string | null;
+  partyMode?: string | null;
+  partyLocked?: boolean;
+  partyMemberCount?: number;
   hasSelectedStoryPack?: boolean;
   selectedStoryPackId?: string | null;
+  pendingSessionBriefing?: boolean;
   pendingResumeChoice?: boolean;
+  pendingDeleteChoice?: boolean;
   pendingStoryPackChoice?: boolean;
   pendingInvestigatorDraftStage?: string | null;
   pendingInvestigatorDraftOccupationKey?: string | null;
+  pendingSceneChoice?: boolean;
+  pendingSceneChoiceKind?: string | null;
+  pendingSceneChoiceTargetNpc?: string | null;
+  pendingSceneChoiceOptions?: string[];
   hasCurrentInvestigator?: boolean;
   currentInvestigatorName?: string | null;
   currentInvestigatorOccupation?: string | null;
@@ -719,10 +757,13 @@ export async function classifyOneBotAiKpDispatchRoute(params: {
     "roll：建卡、快速车卡、批量车卡、看人物卡。",
     "scene：正式跑团中的场内动作，要给出 sceneIntent.actionKind 和尽量完整的语义字段。",
     "严格规则：",
-    "如果 pendingResumeChoice=true 或 pendingStoryPackChoice=true，优先 route=session。",
+    "如果 pendingSessionBriefing=true，像“好”“继续”“开始建卡”这种泛确认优先 route=session + sessionAction=reply_to_prompt；如果用户已经明确给职业、说快速车卡、要看人物卡，还是 route=roll。",
+    "如果 pendingResumeChoice=true、pendingDeleteChoice=true 或 pendingStoryPackChoice=true，优先 route=session。",
     "如果没有选剧本而用户在回答想跑哪个模组/剧本，优先 route=session，并尽量直接给 sessionAction=select_story_pack + storyPackId；只有实在无法映射时才用 reply_to_prompt。",
-    "如果 pendingInvestigatorDraftStage 有值，优先 route=roll。occupation 阶段在等职业；skills 阶段在等信用评级/技能偏好/自动分配。",
+    "如果 pendingInvestigatorDraftStage 有值，优先 route=roll。occupation 阶段在等职业；skills 阶段在等信用评级/技能偏好/自动分配；profile/gear/lock 阶段也都还是建卡回复。",
+    "如果 pendingSceneChoice=true，说明上一句还在等玩家拍板场内选择；可能是在选心理学/说服/恐吓之类的走法，也可能是在选接受/推骰/花幸运。此时相关回复都优先 route=scene。",
     "如果用户是在建卡、回答职业、要看人物卡，route=roll。",
+    "群里 roster 管理语句，例如“算我一个”“我先旁观”“就这些人”“解锁队伍”，优先 route=session + sessionAction=reply_to_prompt。",
     "只有当 sessionMode=kp 且已经有当前调查员，用户明确是在场内行动、调查、交涉、潜行、跟踪、使用道具时，才 route=scene。",
     "如果用户是在问“现在什么情况”“总结一下”“谁在场”，这属于 session 面板，不是 scene。",
     "sceneIntent.actionKind 只能是 explore/talk/use_item/risky_action/steal/follow。",
@@ -734,6 +775,8 @@ export async function classifyOneBotAiKpDispatchRoute(params: {
     "示例：",
     '- “我想跑团” => route=session + sessionAction=start',
     '- “旧教堂那个就行” => route=session + sessionAction=select_story_pack + storyPackId=old-church-arc-pack',
+    '- “算我一个” => route=session + sessionAction=reply_to_prompt',
+    '- “就这些人，开吧” => route=session + sessionAction=reply_to_prompt',
     '- “记者吧” => route=roll + rollAction=traditional + occupationKey=journalist',
     '- “信用20，侦查图书馆心理学” => route=roll + rollAction=traditional',
     '- “自动分配” => route=roll + rollAction=traditional',
@@ -751,12 +794,21 @@ export async function classifyOneBotAiKpDispatchRoute(params: {
     input: {
       text,
       sessionMode: params.sessionMode ?? "idle",
+      partyMode: params.partyMode ?? "solo",
+      partyLocked: params.partyLocked === true,
+      partyMemberCount: typeof params.partyMemberCount === "number" ? params.partyMemberCount : 0,
       hasSelectedStoryPack: params.hasSelectedStoryPack === true,
       selectedStoryPackId: params.selectedStoryPackId ?? null,
+      pendingSessionBriefing: params.pendingSessionBriefing === true,
       pendingResumeChoice: params.pendingResumeChoice === true,
+      pendingDeleteChoice: params.pendingDeleteChoice === true,
       pendingStoryPackChoice: params.pendingStoryPackChoice === true,
       pendingInvestigatorDraftStage: params.pendingInvestigatorDraftStage ?? null,
       pendingInvestigatorDraftOccupationKey: params.pendingInvestigatorDraftOccupationKey ?? null,
+      pendingSceneChoice: params.pendingSceneChoice === true,
+      pendingSceneChoiceKind: params.pendingSceneChoiceKind ?? null,
+      pendingSceneChoiceTargetNpc: params.pendingSceneChoiceTargetNpc ?? null,
+      pendingSceneChoiceOptions: params.pendingSceneChoiceOptions ?? [],
       hasCurrentInvestigator: params.hasCurrentInvestigator === true,
       currentInvestigatorName: params.currentInvestigatorName ?? null,
       currentInvestigatorOccupation: params.currentInvestigatorOccupation ?? null,

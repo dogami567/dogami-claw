@@ -88,7 +88,7 @@ async function createTools() {
 }
 
 afterEach(async () => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -223,7 +223,8 @@ describe("onebot_aikp_session semantic_reply", () => {
     });
     expect(picked.details.routedAction).toBe("reply_to_prompt");
     expect(picked.details.usedMessage).toBe("旧教堂那个就行");
-    expect(picked.details.replyText).toContain("你现在还没车卡");
+    expect(picked.details.replyText).toContain("开团前先对一下边界");
+    expect(picked.details.replyText).toContain("开始建卡");
   });
 
   it("routes natural-language state questions to the state panel", async () => {

@@ -75,6 +75,41 @@ describe("createOneBotAiKpTools", () => {
     expect(tools).toBeNull();
   });
 
+  it("returns null when the AI-KP runtime repo cannot be resolved", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "onebot-aikp-missing-runtime-"));
+    tempDirs.push(root);
+    const previousCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const tools = createOneBotAiKpTools(
+        {
+          config: {
+            channels: {
+              onebot: {
+                aiKp: {},
+              },
+            },
+          },
+          runtime: {
+            channel: {
+              session: {
+                resolveStorePath: () => "/tmp/store",
+              },
+            },
+          },
+        } as any,
+        {
+          messageChannel: "onebot",
+          sessionKey: "onebot:group:875336657",
+          agentId: "main",
+        } as any,
+      );
+      expect(tools).toBeNull();
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
   it("runs the semantic AI-KP flow through session, roll, scene-turn, and history tools", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "onebot-aikp-tool-"));
     tempDirs.push(root);
@@ -105,7 +140,8 @@ describe("createOneBotAiKpTools", () => {
       originalText: "那就跑旧教堂",
       senderName: "Dogami",
     });
-    expect(pack.details.replyText).toContain("你现在还没车卡");
+    expect(pack.details.replyText).toContain("开团前先对一下边界");
+    expect(pack.details.replyText).toContain("开始建卡");
 
     const roll = await byName.onebot_aikp_roll.execute("3", {
       action: "traditional",
@@ -125,7 +161,32 @@ describe("createOneBotAiKpTools", () => {
     expect(finalize.details.replyText).toContain("Dogami｜记者");
     expect(finalize.details.usedMessage).toBe("自动分配");
 
-    const turn = await byName.onebot_aikp_scene_turn.execute("5", {
+    const profile = await byName.onebot_aikp_roll.execute("5", {
+      action: "traditional",
+      originalText: "默认继续",
+      senderName: "Dogami",
+    });
+    expect(profile.details.replyText).toContain("再看下初始携带物");
+    expect(profile.details.usedMessage).toBe("默认继续");
+
+    const gear = await byName.onebot_aikp_roll.execute("6", {
+      action: "traditional",
+      originalText: "默认继续",
+      senderName: "Dogami",
+    });
+    expect(gear.details.replyText).toContain("卡我先收成这样");
+    expect(gear.details.usedMessage).toBe("默认继续");
+
+    const lock = await byName.onebot_aikp_roll.execute("7", {
+      action: "traditional",
+      originalText: "锁卡",
+      senderName: "Dogami",
+    });
+    expect(lock.details.replyText).toContain("当前绑定调查员");
+    expect(lock.details.replyText).toContain("门一推开");
+    expect(lock.details.usedMessage).toBe("锁卡");
+
+    const turn = await byName.onebot_aikp_scene_turn.execute("8", {
       originalText: "I check the altar carefully",
       actionKind: "explore",
       intentSummary: "Inspect the altar for fresh scratches",
@@ -141,7 +202,7 @@ describe("createOneBotAiKpTools", () => {
     expect(turn.details.matchedRuleId).toBe("altar-scratch-inspect");
     expect(turn.details.contextPacket).toBeTruthy();
 
-    const history = await byName.onebot_aikp_history.execute("6", {
+    const history = await byName.onebot_aikp_history.execute("9", {
       section: "all",
       limit: 6,
     });

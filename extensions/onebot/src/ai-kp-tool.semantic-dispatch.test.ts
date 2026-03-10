@@ -88,7 +88,7 @@ async function createTools() {
 }
 
 afterEach(async () => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -124,6 +124,24 @@ describe("onebot_aikp_dispatch", () => {
         reason: "user is giving skill allocation preferences",
       })
       .mockResolvedValueOnce({
+        route: "roll",
+        rollAction: "traditional",
+        confidence: 0.92,
+        reason: "user accepts the default profile",
+      })
+      .mockResolvedValueOnce({
+        route: "roll",
+        rollAction: "traditional",
+        confidence: 0.91,
+        reason: "user accepts the default gear",
+      })
+      .mockResolvedValueOnce({
+        route: "roll",
+        rollAction: "traditional",
+        confidence: 0.93,
+        reason: "user locks the card",
+      })
+      .mockResolvedValueOnce({
         route: "scene",
         confidence: 0.95,
         reason: "user is inspecting the altar area",
@@ -151,7 +169,7 @@ describe("onebot_aikp_dispatch", () => {
       senderName: "Dogami",
     });
     expect(pack.details.routedTool).toBe("onebot_aikp_session");
-    expect(pack.details.replyText).toContain("你现在还没车卡");
+    expect(pack.details.replyText).toContain("开团前先对一下边界");
 
     const roll = await byName.onebot_aikp_dispatch.execute("3", {
       originalText: "记者吧",
@@ -167,9 +185,31 @@ describe("onebot_aikp_dispatch", () => {
     expect(finalize.details.routedTool).toBe("onebot_aikp_roll");
     expect(finalize.details.usedMessage).toBe("信用20，侦查、图书馆、心理学、说服");
     expect(finalize.details.replyText).toContain("传统随机车卡 已经给你落好了");
-    expect(finalize.details.replyText).toContain("Dogami｜记者");
+    expect(finalize.details.replyText).toContain("先别急着开场");
 
-    const scene = await byName.onebot_aikp_dispatch.execute("5", {
+    const profile = await byName.onebot_aikp_dispatch.execute("5", {
+      originalText: "默认继续",
+      senderName: "Dogami",
+    });
+    expect(profile.details.routedTool).toBe("onebot_aikp_roll");
+    expect(profile.details.replyText).toContain("再看下初始携带物");
+
+    const gear = await byName.onebot_aikp_dispatch.execute("6", {
+      originalText: "默认继续",
+      senderName: "Dogami",
+    });
+    expect(gear.details.routedTool).toBe("onebot_aikp_roll");
+    expect(gear.details.replyText).toContain("卡我先收成这样");
+
+    const lock = await byName.onebot_aikp_dispatch.execute("7", {
+      originalText: "锁卡",
+      senderName: "Dogami",
+    });
+    expect(lock.details.routedTool).toBe("onebot_aikp_roll");
+    expect(lock.details.replyText).toContain("当前绑定调查员");
+    expect(lock.details.replyText).toContain("门一推开");
+
+    const scene = await byName.onebot_aikp_dispatch.execute("8", {
       originalText: "我借着手电去看祭坛背后的刮痕",
       senderName: "Dogami",
     });
@@ -222,6 +262,24 @@ describe("onebot_aikp_scene_turn semantic inference", () => {
         reason: "user wants a quick journalist sheet",
       })
       .mockResolvedValueOnce({
+        route: "roll",
+        rollAction: "traditional",
+        confidence: 0.92,
+        reason: "user accepts the default profile",
+      })
+      .mockResolvedValueOnce({
+        route: "roll",
+        rollAction: "traditional",
+        confidence: 0.91,
+        reason: "user accepts the default gear",
+      })
+      .mockResolvedValueOnce({
+        route: "roll",
+        rollAction: "traditional",
+        confidence: 0.93,
+        reason: "user locks the card",
+      })
+      .mockResolvedValueOnce({
         route: "scene",
         confidence: 0.94,
         reason: "user is inspecting the altar area",
@@ -247,6 +305,18 @@ describe("onebot_aikp_scene_turn semantic inference", () => {
       originalText: "给我快速记者卡",
       senderName: "Dogami",
     });
+    await byName.onebot_aikp_dispatch.execute("3.1", {
+      originalText: "默认继续",
+      senderName: "Dogami",
+    });
+    await byName.onebot_aikp_dispatch.execute("3.2", {
+      originalText: "默认继续",
+      senderName: "Dogami",
+    });
+    await byName.onebot_aikp_dispatch.execute("3.3", {
+      originalText: "锁卡",
+      senderName: "Dogami",
+    });
 
     const scene = await byName.onebot_aikp_scene_turn.execute("4", {
       originalText: "我借着手电去看祭坛背后的刮痕",
@@ -258,5 +328,105 @@ describe("onebot_aikp_scene_turn semantic inference", () => {
       route: "scene",
     });
     expect(scene.details.replyText).toContain("Spot Hidden");
+  });
+
+  it("pauses ambiguous talk actions for a player-picked social method, then resolves the chosen follow-up", async () => {
+    classifyOneBotAiKpDispatchRouteMock
+      .mockResolvedValueOnce({
+        route: "session",
+        sessionAction: "start",
+        confidence: 0.99,
+        reason: "user wants to begin a run",
+      })
+      .mockResolvedValueOnce({
+        route: "session",
+        sessionAction: "select_story_pack",
+        storyPackId: "old-church-arc-pack",
+        confidence: 0.97,
+        reason: "user chose the old church pack",
+      })
+      .mockResolvedValueOnce({
+        route: "roll",
+        rollAction: "quickfire",
+        occupationKey: "journalist",
+        confidence: 0.96,
+        reason: "user wants a quick journalist sheet",
+      })
+      .mockResolvedValueOnce({
+        route: "roll",
+        rollAction: "traditional",
+        confidence: 0.92,
+        reason: "user accepts the default profile",
+      })
+      .mockResolvedValueOnce({
+        route: "roll",
+        rollAction: "traditional",
+        confidence: 0.91,
+        reason: "user accepts the default gear",
+      })
+      .mockResolvedValueOnce({
+        route: "roll",
+        rollAction: "traditional",
+        confidence: 0.93,
+        reason: "user locks the card",
+      })
+      .mockResolvedValueOnce({
+        route: "scene",
+        confidence: 0.95,
+        reason: "user is talking to the gravedigger about the bell sound",
+        sceneIntent: {
+          actionKind: "talk",
+          intentSummary: "Talk to the gravedigger about the bell sound",
+          targetNpc: "gravedigger",
+        },
+      });
+
+    const byName = await createTools();
+    await byName.onebot_aikp_dispatch.execute("1", {
+      originalText: "我想跑团",
+      senderName: "Dogami",
+    });
+    await byName.onebot_aikp_dispatch.execute("2", {
+      originalText: "旧教堂那个就行",
+      senderName: "Dogami",
+    });
+    await byName.onebot_aikp_dispatch.execute("3", {
+      originalText: "给我快速记者卡",
+      senderName: "Dogami",
+    });
+    await byName.onebot_aikp_dispatch.execute("3.1", {
+      originalText: "默认继续",
+      senderName: "Dogami",
+    });
+    await byName.onebot_aikp_dispatch.execute("3.2", {
+      originalText: "默认继续",
+      senderName: "Dogami",
+    });
+    await byName.onebot_aikp_dispatch.execute("3.3", {
+      originalText: "锁卡",
+      senderName: "Dogami",
+    });
+
+    const prompt = await byName.onebot_aikp_scene_turn.execute("4", {
+      originalText: "我去找守墓人聊聊钟声",
+      senderName: "Dogami",
+    });
+    expect(prompt.details.ok).toBe(false);
+    expect(prompt.details.needsSceneChoice).toBe(true);
+    expect(prompt.details.replyText).toContain("心理学");
+    expect(prompt.details.replyText).toContain("说服");
+
+    const followUp = await byName.onebot_aikp_scene_turn.execute("5", {
+      originalText: "走说服",
+      senderName: "Dogami",
+    });
+    expect([true, false]).toContain(followUp.details.ok);
+    expect(followUp.details.replyText).toMatch(/投掷：|你现在可以这么选：/);
+    if (followUp.details.resolvedAction) {
+      expect(followUp.details.resolvedAction.skillKey).toBe("Persuade");
+    } else {
+      expect(followUp.details.needsSceneChoice).toBe(true);
+      expect(followUp.details.reason).toBe("pending_scene_action_choice");
+    }
   });
 });

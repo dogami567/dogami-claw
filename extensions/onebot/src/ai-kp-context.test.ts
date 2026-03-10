@@ -192,6 +192,45 @@ describe("mergeOneBotGroupSystemPrompt", () => {
 });
 
 describe("resolveOneBotAiKpConfig", () => {
+  it("keeps the hybrid AI-KP bridge enabled by default", () => {
+    const resolved = resolveOneBotAiKpConfig(buildConfig("/tmp/onebot"));
+    expect(resolved.delegateToRuntime).toBe(true);
+    expect(resolved.semanticToolsEnabled).toBe(true);
+  });
+
+  it("detects local dev runtimes under .runtime-work workspace layouts", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "onebot-aikp-cwd-"));
+    tempDirs.push(root);
+    const aiKpRoot = path.join(root, ".runtime-work", "workspace", "clawd-ai-kp");
+    await mkdir(path.join(aiKpRoot, "adapter", "onebot"), { recursive: true });
+    await writeFile(path.join(aiKpRoot, "adapter", "onebot", "single-session.js"), "module.exports = {};\n");
+    await writeFile(path.join(aiKpRoot, "adapter", "onebot", "runtime.js"), "module.exports = {};\n");
+
+    const previousCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const resolved = resolveOneBotAiKpConfig({} as ClawdbotConfig);
+      expect(resolved.storageRoot).toBe(path.join(aiKpRoot, "runtime", "onebot"));
+      expect(resolved.runtimeModulePath).toBe(path.join(aiKpRoot, "adapter", "onebot", "runtime.js"));
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
+  it("leaves implicit runtime paths unset when no runtime repo can be found", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "onebot-aikp-empty-"));
+    tempDirs.push(root);
+    const previousCwd = process.cwd();
+    process.chdir(root);
+    try {
+      const resolved = resolveOneBotAiKpConfig({} as ClawdbotConfig);
+      expect(resolved.storageRoot).toBeUndefined();
+      expect(resolved.runtimeModulePath).toBeUndefined();
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
   it("keeps mention bypass opt-in", () => {
     expect(resolveOneBotAiKpConfig(buildConfig("/tmp/onebot")).bypassMentionWhenActive).toBe(false);
     expect(

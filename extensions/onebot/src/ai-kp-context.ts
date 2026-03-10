@@ -14,12 +14,25 @@ const MAX_LINE_CHARS = 220;
 
 type AiKpMeta = {
   sessionMode?: string;
+  partyLockedAt?: string | null;
+  partyRosterByUserId?: Record<string, unknown> | null;
+  pendingSessionBriefing?: {
+    storyPackId?: string | null;
+  } | null;
   pendingResumeChoice?: Record<string, unknown> | null;
+  pendingDeleteChoice?: {
+    saveId?: string | null;
+  } | null;
   pendingStoryPackChoice?: Record<string, unknown> | null;
   pendingInvestigatorDraft?: {
     stage?: string;
     occupationKey?: string | null;
     occupationName?: string | null;
+  } | null;
+  pendingSceneActionChoice?: {
+    kind?: string;
+    targetNpcName?: string | null;
+    options?: string[];
   } | null;
   storyPackId?: string | null;
 };
@@ -39,6 +52,10 @@ type AiKpContextPacket = {
   runtimeProfileId?: string;
   runtimePrompt?: string;
   state?: {
+    pendingSessionBriefing?: {
+      storyPackId?: string | null;
+    } | null;
+    briefingConfirmedAt?: string | null;
     scene?: {
       summary?: string;
       location?: string;
@@ -47,10 +64,25 @@ type AiKpContextPacket = {
       currentActorName?: string;
       round?: number;
     };
+    party?: {
+      mode?: string | null;
+      locked?: boolean;
+      memberCount?: number;
+      members?: Array<{
+        userName?: string | null;
+        status?: string | null;
+        investigatorName?: string | null;
+      }>;
+    } | null;
     pendingInvestigatorDraft?: {
       stage?: string;
       occupationKey?: string | null;
       occupationName?: string | null;
+    } | null;
+    pendingSceneActionChoice?: {
+      kind?: string;
+      targetNpcName?: string | null;
+      options?: string[];
     } | null;
     revealedClues?: string[];
     investigators?: AiKpInvestigator[];
@@ -150,16 +182,18 @@ function resolveAiKpBaseDirCandidates(cfg: ClawdbotConfig): string[] {
   if (workspace) {
     candidates.push(path.join(workspace, "clawd-ai-kp"));
   }
+  candidates.push(path.resolve(process.cwd(), "clawd-ai-kp"));
   candidates.push(path.resolve(process.cwd(), ".runtime", "workspace", "clawd-ai-kp"));
+  candidates.push(path.resolve(process.cwd(), ".runtime-work", "workspace", "clawd-ai-kp"));
   return candidates.filter((candidate, index, list) => candidate && list.indexOf(candidate) === index);
 }
 
 function resolveDefaultAiKpBaseDir(cfg: ClawdbotConfig): string | undefined {
   const candidates = resolveAiKpBaseDirCandidates(cfg);
   for (const candidate of candidates) {
-    if (existsSync(candidate)) return candidate;
+    if (existsSync(path.join(candidate, "adapter", "onebot", "single-session.js"))) return candidate;
   }
-  return candidates[0];
+  return undefined;
 }
 
 function resolveDefaultStorageRoot(cfg: ClawdbotConfig): string | undefined {
@@ -351,7 +385,7 @@ function buildActiveToolGuideLines(): string[] {
   return [
     `[Available Tools]`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.dispatch}: preferred front door for almost any direct player message. Give it the raw message first so it can route semantically into session/roll/scene handling without forcing rigid commands.`,
-    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: narrower session-control tool for start/resume/pause, save/story-pack choices, panels, spotlight and turn order. For freeform answers such as “接昨晚那条” or “别续旧档了”，prefer action=semantic_reply if you are already deliberately using the session tool.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: narrower session-control tool for start/resume/pause, save/story-pack choices, party roster join/leave/lock, panels, spotlight and turn order. For freeform answers such as “接昨晚那条”“算我一个”或“就这些人了”，prefer action=semantic_reply if you are already deliberately using the session tool.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: narrower sheet/chargen tool. For natural replies such as “记者吧”“信用20，侦查图书馆心理学”“自动分配”“给我快速医生卡”“大家一起车吧”，prefer action=semantic_reply if you are already deliberately using the roll tool.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.sceneTurn}: narrower in-world action tool. It can infer scene semantics from originalText alone, but structured fields such as actionKind/skillKey/targetNpc/targetClue/targetArea remain the most precise path.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.history}: pull older summaries/chat/operations if compaction hid earlier context.`,
@@ -362,11 +396,26 @@ function buildSessionMetaLines(meta?: AiKpMeta | null): string[] {
   const lines: string[] = [];
   const sessionMode = normalizeLine(meta?.sessionMode);
   if (sessionMode) lines.push(`Session mode: ${sessionMode}`);
+  if (meta?.pendingSessionBriefing) {
+    lines.push("Pending choice: confirm the session briefing or move into chargen.");
+  }
   if (meta?.pendingResumeChoice) {
     lines.push("Pending choice: resume current save or start a new line.");
   }
+  if (meta?.pendingDeleteChoice?.saveId) {
+    lines.push(`Pending choice: confirm whether to delete archived save ${meta.pendingDeleteChoice.saveId}.`);
+  }
   if (meta?.pendingStoryPackChoice) {
     lines.push("Pending choice: select the story pack before scene play continues.");
+  }
+  if (meta?.partyLockedAt) {
+    lines.push("Party roster: locked.");
+  }
+  if (isRecord(meta?.partyRosterByUserId)) {
+    const memberCount = Object.keys(meta.partyRosterByUserId).length;
+    if (memberCount > 0) {
+      lines.push(`Party roster count: ${memberCount}.`);
+    }
   }
   if (meta?.pendingInvestigatorDraft?.stage) {
     const occupation =
@@ -374,6 +423,20 @@ function buildSessionMetaLines(meta?: AiKpMeta | null): string[] {
       normalizeLine(meta.pendingInvestigatorDraft.occupationKey) ??
       "undecided";
     lines.push(`Pending chargen: ${meta.pendingInvestigatorDraft.stage} step (${occupation}).`);
+  }
+  if (meta?.pendingSceneActionChoice?.kind) {
+    const choiceKind = normalizeLine(meta.pendingSceneActionChoice.kind);
+    const options = Array.isArray(meta.pendingSceneActionChoice.options)
+      ? meta.pendingSceneActionChoice.options.map((item) => normalizeLine(item)).filter(Boolean).join(", ")
+      : "";
+    if (choiceKind === "post_check_choice") {
+      lines.push(`Pending scene choice: resolve the failed check follow-up (${options || "accept, push, luck"}).`);
+    } else {
+      const targetNpc = normalizeLine(meta.pendingSceneActionChoice.targetNpcName) ?? "the current focus";
+      lines.push(
+        `Pending scene choice: pick the approach before rolling (${targetNpc}${options ? ` | options: ${options}` : ""}).`,
+      );
+    }
   }
   const storyPackId = normalizeLine(meta?.storyPackId);
   if (storyPackId) lines.push(`Selected story pack: ${storyPackId}`);
@@ -384,7 +447,7 @@ function buildIdleToolGuideLines(): string[] {
   return [
     `[Available Tools]`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.dispatch}: preferred front door for direct player messages. Use it first when the user might be starting a run, picking a story pack, building a card, asking for state, or taking an in-world action.`,
-    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: narrower session-control tool. Use action=semantic_reply when the player answered naturally and you should map it to resume/new-line/panel/list behavior.`,
+    `- ${ONEBOT_AIKP_TOOL_NAMES.session}: narrower session-control tool. Use action=semantic_reply when the player answered naturally and you should map it to resume/new-line/panel/list/party-roster behavior.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.roll}: narrower sheet tool. Use action=semantic_reply when the player naturally answers a chargen prompt, only names an occupation, gives credit/skill preferences, says “自动分配”, or asks for quick/traditional/party chargen without fixed wording.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.sceneTurn}: use only after the conversation is actually in an active TRPG scene, or when dispatch already routed here.`,
     `- ${ONEBOT_AIKP_TOOL_NAMES.history}: read older AI-KP logs if you need compacted context.`,
@@ -447,12 +510,32 @@ function buildAiKpPromptBlock(params: {
   if (typeof state?.turnState?.round === "number") {
     lines.push(`Round: ${state.turnState.round}`);
   }
+  const partyMode = normalizeLine(state?.party?.mode);
+  if (partyMode) lines.push(`Party mode: ${partyMode}`);
+  if (typeof state?.party?.memberCount === "number") {
+    lines.push(`Party members: ${state.party.memberCount}${state.party.locked ? " (locked)" : ""}`);
+  }
+  if (Array.isArray(state?.party?.members) && state.party.members.length > 0) {
+    const partyMembers = dedupeLines(
+      state.party.members.map((member) => {
+        const name = normalizeLine(member?.userName) ?? "unknown";
+        const investigator = normalizeLine(member?.investigatorName);
+        const status = normalizeLine(member?.status) ?? "joined";
+        return investigator ? `${name}/${investigator}/${status}` : `${name}/${status}`;
+      }),
+      8,
+    ).join("、");
+    if (partyMembers) lines.push(`Party roster: ${partyMembers}`);
+  }
   if (Array.isArray(state?.revealedClues) && state.revealedClues.length > 0) {
     const clues = dedupeLines(state.revealedClues, 8).join("、");
     if (clues) lines.push(`Revealed clues: ${clues}`);
   }
   const investigators = formatInvestigators(state?.investigators);
   if (investigators) lines.push(`Party: ${investigators}`);
+  if (state?.pendingSessionBriefing) {
+    lines.push("Pending session briefing: wait for the player to confirm boundaries or start chargen.");
+  }
   const pendingDraftStage = normalizeLine(state?.pendingInvestigatorDraft?.stage);
   if (pendingDraftStage) {
     const pendingOccupation =
@@ -460,6 +543,20 @@ function buildAiKpPromptBlock(params: {
       normalizeLine(state?.pendingInvestigatorDraft?.occupationKey) ??
       "未定";
     lines.push(`Pending chargen stage: ${pendingDraftStage} (${pendingOccupation})`);
+  }
+  if (state?.pendingSceneActionChoice?.kind) {
+    const choiceKind = normalizeLine(state.pendingSceneActionChoice.kind);
+    const options = Array.isArray(state.pendingSceneActionChoice.options)
+      ? state.pendingSceneActionChoice.options.map((item) => normalizeLine(item)).filter(Boolean).join(", ")
+      : "";
+    if (choiceKind === "post_check_choice") {
+      lines.push(`Pending scene choice: wait for accept / push / luck (${options || "accept, push, luck"}).`);
+    } else {
+      const targetNpc = normalizeLine(state.pendingSceneActionChoice.targetNpcName) ?? "the current focus";
+      lines.push(
+        `Pending scene choice: wait for the player to choose the approach before rolling (${targetNpc}${options ? ` | options: ${options}` : ""}).`,
+      );
+    }
   }
 
   if (summaryText) {
@@ -504,9 +601,11 @@ function buildIdleAiKpPromptBlock(params: {
   }
   lines.push(
     `If a tool result says a resume/new-line or story-pack choice is pending, ask that choice plainly and wait for the user's answer.`,
+    `If a session briefing is pending, generic confirmations like “好”“继续”“开始建卡” belong in AI-KP session flow, while explicit occupation or quickfire picks still belong in AI-KP roll flow.`,
     `For almost any direct player message about AI-KP play, use ${ONEBOT_AIKP_TOOL_NAMES.dispatch} first instead of hand-picking narrower tools.`,
     `When the user answers that pending question in natural language, use ${ONEBOT_AIKP_TOOL_NAMES.session} with action=semantic_reply instead of demanding exact words.`,
     `When a user answers the chargen step naturally, such as only naming an occupation, giving credit/skill preferences, saying “自动分配”, or asking for quickfire in freeform text, use ${ONEBOT_AIKP_TOOL_NAMES.roll} with action=semantic_reply.`,
+    `If a pending scene choice is waiting for a method pick or a post-check choice like accept/push/luck, route that natural reply back into AI-KP scene handling instead of free-chatting over it.`,
     `If the user is just discussing features, asking how AI-KP works, or chatting normally, answer without AI-KP tools.`,
     "",
     ...buildIdleToolGuideLines(),
