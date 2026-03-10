@@ -66,6 +66,7 @@ export const sendHandlers: GatewayRequestHandlers = {
       gifPlayback?: boolean;
       channel?: string;
       accountId?: string;
+      threadId?: string;
       sessionKey?: string;
       idempotencyKey: string;
     };
@@ -103,6 +104,10 @@ export const sendHandlers: GatewayRequestHandlers = {
     const accountId =
       typeof request.accountId === "string" && request.accountId.trim().length
         ? request.accountId.trim()
+        : undefined;
+    const threadId =
+      typeof request.threadId === "string" && request.threadId.trim().length
+        ? request.threadId.trim()
         : undefined;
     const outboundChannel = channel as Exclude<OutboundChannel, "none">;
     const plugin = getChannelPlugin(channel as ChannelId);
@@ -172,6 +177,7 @@ export const sendHandlers: GatewayRequestHandlers = {
           channel: outboundChannel,
           to: resolved.to,
           accountId,
+          threadId,
           payloads: [{ text: message, mediaUrl: request.mediaUrl, mediaUrls }],
           gifPlayback: request.gifPlayback,
           deps: outboundDeps,

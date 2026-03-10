@@ -11,6 +11,7 @@ import { createGatewayTool } from "./tools/gateway-tool.js";
 import { createImageTool } from "./tools/image-tool.js";
 import { createMessageTool } from "./tools/message-tool.js";
 import { createNodesTool } from "./tools/nodes-tool.js";
+import { createPhoneTool } from "./tools/phone-tool.js";
 import { createSessionStatusTool } from "./tools/session-status-tool.js";
 import { createSessionsHistoryTool } from "./tools/sessions-history-tool.js";
 import { createSessionsListTool } from "./tools/sessions-list-tool.js";
@@ -84,6 +85,9 @@ export function createClawdbotTools(options?: {
     createCanvasTool(),
     createNodesTool({
       agentSessionKey: options?.agentSessionKey,
+      config: options?.config,
+    }),
+    createPhoneTool({
       config: options?.config,
     }),
     createCronTool({

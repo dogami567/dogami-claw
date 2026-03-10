@@ -138,4 +138,16 @@ describe("docker-setup.sh", () => {
     expect(compose).not.toContain("gateway-daemon");
     expect(compose).toContain('"gateway"');
   });
+
+  it("documents the current Docker health command", async () => {
+    const script = await readFile(join(repoRoot, "docker-setup.sh"), "utf8");
+    const docs = await readFile(join(repoRoot, "docs", "install", "docker.md"), "utf8");
+    const compose = await readFile(join(repoRoot, "docker-compose.yml"), "utf8");
+
+    expect(script).toContain("health --json");
+    expect(script).not.toContain("health --token");
+    expect(docs).toContain("health --json");
+    expect(docs).not.toContain("health --token");
+    expect(compose).toContain("CLAWDBOT_GATEWAY_PORT: ${CLAWDBOT_GATEWAY_PORT:-18789}");
+  });
 });

@@ -12,6 +12,7 @@ import { healthHandlers } from "./server-methods/health.js";
 import { logsHandlers } from "./server-methods/logs.js";
 import { modelsHandlers } from "./server-methods/models.js";
 import { nodeHandlers } from "./server-methods/nodes.js";
+import { phoneHandlers } from "./server-methods/phone.js";
 import { sendHandlers } from "./server-methods/send.js";
 import { sessionsHandlers } from "./server-methods/sessions.js";
 import { skillsHandlers } from "./server-methods/skills.js";
@@ -71,6 +72,11 @@ const READ_METHODS = new Set([
   "node.list",
   "node.describe",
   "chat.history",
+  "phone.list",
+  "phone.discover",
+  "phone.status",
+  "phone.check",
+  "phone.screen",
 ]);
 const WRITE_METHODS = new Set([
   "send",
@@ -86,6 +92,8 @@ const WRITE_METHODS = new Set([
   "node.invoke",
   "chat.send",
   "chat.abort",
+  "phone.run",
+  "phone.stop",
 ]);
 
 function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["client"]) {
@@ -155,6 +163,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...execApprovalsHandlers,
   ...webHandlers,
   ...modelsHandlers,
+  ...phoneHandlers,
   ...configHandlers,
   ...wizardHandlers,
   ...talkHandlers,

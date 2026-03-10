@@ -252,4 +252,42 @@ describe("subscribeEmbeddedPiSession", () => {
     expect(payloads[0]?.text).toBe("");
     expect(payloads[0]?.mediaUrls).toEqual(["https://example.com/a.png"]);
   });
+
+  it("emits a final assistant event when only message_end contains the text", () => {
+    let handler: ((evt: unknown) => void) | undefined;
+    const session: StubSession = {
+      subscribe: (fn) => {
+        handler = fn;
+        return () => {};
+      },
+    };
+
+    const onAgentEvent = vi.fn();
+
+    subscribeEmbeddedPiSession({
+      session: session as unknown as Parameters<typeof subscribeEmbeddedPiSession>[0]["session"],
+      runId: "run",
+      onAgentEvent,
+    });
+
+    handler?.({ type: "message_start", message: { role: "assistant" } });
+    handler?.({
+      type: "message_end",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "webchat final body" }],
+      },
+    });
+
+    const assistantPayloads = onAgentEvent.mock.calls
+      .map((call) => call[0])
+      .filter(
+        (value): value is { stream?: string; data?: Record<string, unknown> } =>
+          Boolean(value) && value.stream === "assistant" && Boolean(value.data),
+      )
+      .map((value) => value.data as Record<string, unknown>);
+    expect(assistantPayloads).toHaveLength(1);
+    expect(assistantPayloads[0]?.text).toBe("webchat final body");
+    expect(assistantPayloads[0]?.delta).toBe("webchat final body");
+  });
 });

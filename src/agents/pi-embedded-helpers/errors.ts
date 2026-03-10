@@ -299,6 +299,17 @@ export function formatAssistantErrorText(
     return "The AI service is temporarily overloaded. Please try again in a moment.";
   }
 
+  if (
+    raw.toLowerCase().includes("stream_read_error") ||
+    raw.toLowerCase().includes("could not parse message into json") ||
+    raw.toLowerCase().includes("bad control character in string literal in json")
+  ) {
+    return (
+      "The AI provider's response stream broke mid-response. " +
+      "Please retry; if this keeps happening, switch to another model/provider."
+    );
+  }
+
   if (isLikelyHttpErrorText(raw) || isRawApiErrorPayload(raw)) {
     return formatRawAssistantErrorForUi(raw);
   }
@@ -395,6 +406,9 @@ const ERROR_PATTERNS = {
     "tool_use_id",
     "messages.1.content.1.tool_use.id",
     "invalid request format",
+    "stream_read_error",
+    "could not parse message into json",
+    "bad control character in string literal in json",
   ],
 } as const;
 

@@ -99,6 +99,20 @@ import {
   LogsTailResultSchema,
   type ModelsListParams,
   ModelsListParamsSchema,
+  type PhoneCheckParams,
+  PhoneCheckParamsSchema,
+  type PhoneDiscoverParams,
+  PhoneDiscoverParamsSchema,
+  type PhoneListParams,
+  PhoneListParamsSchema,
+  type PhoneRunParams,
+  PhoneRunParamsSchema,
+  type PhoneScreenParams,
+  PhoneScreenParamsSchema,
+  type PhoneStatusParams,
+  PhoneStatusParamsSchema,
+  type PhoneStopParams,
+  PhoneStopParamsSchema,
   type NodeDescribeParams,
   NodeDescribeParamsSchema,
   type NodeEventParams,
@@ -264,6 +278,14 @@ export const validateChannelsLogoutParams = ajv.compile<ChannelsLogoutParams>(
   ChannelsLogoutParamsSchema,
 );
 export const validateModelsListParams = ajv.compile<ModelsListParams>(ModelsListParamsSchema);
+export const validatePhoneListParams = ajv.compile<PhoneListParams>(PhoneListParamsSchema);
+export const validatePhoneDiscoverParams =
+  ajv.compile<PhoneDiscoverParams>(PhoneDiscoverParamsSchema);
+export const validatePhoneStatusParams = ajv.compile<PhoneStatusParams>(PhoneStatusParamsSchema);
+export const validatePhoneCheckParams = ajv.compile<PhoneCheckParams>(PhoneCheckParamsSchema);
+export const validatePhoneScreenParams = ajv.compile<PhoneScreenParams>(PhoneScreenParamsSchema);
+export const validatePhoneRunParams = ajv.compile<PhoneRunParams>(PhoneRunParamsSchema);
+export const validatePhoneStopParams = ajv.compile<PhoneStopParams>(PhoneStopParamsSchema);
 export const validateSkillsStatusParams = ajv.compile<SkillsStatusParams>(SkillsStatusParamsSchema);
 export const validateSkillsBinsParams = ajv.compile<SkillsBinsParams>(SkillsBinsParamsSchema);
 export const validateSkillsInstallParams =
@@ -409,6 +431,13 @@ export {
   AgentsListParamsSchema,
   AgentsListResultSchema,
   ModelsListParamsSchema,
+  PhoneCheckParamsSchema,
+  PhoneDiscoverParamsSchema,
+  PhoneListParamsSchema,
+  PhoneRunParamsSchema,
+  PhoneScreenParamsSchema,
+  PhoneStatusParamsSchema,
+  PhoneStopParamsSchema,
   SkillsStatusParamsSchema,
   SkillsInstallParamsSchema,
   SkillsUpdateParamsSchema,
@@ -482,6 +511,13 @@ export type {
   AgentSummary,
   AgentsListParams,
   AgentsListResult,
+  PhoneCheckParams,
+  PhoneDiscoverParams,
+  PhoneListParams,
+  PhoneRunParams,
+  PhoneScreenParams,
+  PhoneStatusParams,
+  PhoneStopParams,
   SkillsStatusParams,
   SkillsBinsParams,
   SkillsBinsResult,

@@ -186,6 +186,39 @@ export function handleMessageEnd(
   const chunkerHasBuffered = ctx.blockChunker?.hasBuffered() ?? false;
   ctx.finalizeAssistantTexts({ text, addedDuringMessage, chunkerHasBuffered });
 
+  const finalSplit = parseReplyDirectives(text);
+  const previousSplit = parseReplyDirectives(ctx.state.lastStreamedAssistant ?? "");
+  const finalCleanedText = finalSplit.text;
+  const previousCleanedText = previousSplit.text;
+  const finalMediaUrls = finalSplit.mediaUrls?.length ? finalSplit.mediaUrls : undefined;
+  const previousMediaUrls = previousSplit.mediaUrls?.length ? previousSplit.mediaUrls : undefined;
+  const mediaChanged =
+    JSON.stringify(finalMediaUrls ?? []) !== JSON.stringify(previousMediaUrls ?? []);
+  if (
+    ctx.params.onAgentEvent &&
+    (finalCleanedText !== previousCleanedText || mediaChanged) &&
+    (finalCleanedText || finalMediaUrls?.length)
+  ) {
+    const deltaText =
+      finalCleanedText.startsWith(previousCleanedText) && previousCleanedText
+        ? finalCleanedText.slice(previousCleanedText.length)
+        : finalCleanedText;
+    const agentPayload = {
+      text: finalCleanedText,
+      delta: deltaText,
+      mediaUrls: finalMediaUrls,
+    };
+    emitAgentEvent({
+      runId: ctx.params.runId,
+      stream: "assistant",
+      data: agentPayload,
+    });
+    void ctx.params.onAgentEvent({
+      stream: "assistant",
+      data: agentPayload,
+    });
+  }
+
   const onBlockReply = ctx.params.onBlockReply;
   const shouldEmitReasoning = Boolean(
     ctx.state.includeReasoning &&

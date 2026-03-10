@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 
+import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { loadConfig } from "../config/config.js";
 import {
   loadSessionStore,
@@ -18,6 +19,7 @@ import {
   mergeDeliveryContext,
   normalizeDeliveryContext,
 } from "../utils/delivery-context.js";
+import { INTERNAL_MESSAGE_CHANNEL, isDeliverableMessageChannel } from "../utils/message-channel.js";
 import { isEmbeddedPiRunActive, queueEmbeddedPiMessage } from "./pi-embedded.js";
 import { type AnnounceQueueItem, enqueueAnnounce } from "./subagent-announce-queue.js";
 import { readLatestAssistantReply } from "./tools/agent-step.js";
@@ -96,25 +98,113 @@ function resolveAnnounceOrigin(
   return mergeDeliveryContext(deliveryContextFromSession(entry), requesterOrigin);
 }
 
+function buildHiddenAnnounceSessionKey(requesterSessionKey: string): string {
+  const agentId = resolveAgentIdFromSessionKey(requesterSessionKey);
+  return `agent:${agentId}:subagent:announce:${crypto.randomUUID()}`;
+}
+
+async function deliverSubagentAnnouncement(params: {
+  requesterSessionKey: string;
+  triggerMessage: string;
+  requesterOrigin?: DeliveryContext;
+  timeoutMs?: number;
+}): Promise<boolean> {
+  const cfg = loadConfig();
+  const requesterSessionKey = resolveRequesterStoreKey(cfg, params.requesterSessionKey);
+  const hiddenSessionKey = buildHiddenAnnounceSessionKey(requesterSessionKey);
+  const origin = normalizeDeliveryContext(params.requesterOrigin);
+
+  try {
+    // Summarize in a throwaway session so NO_REPLY/system-only text never lands in the
+    // requester transcript or external channel as a visible agent turn.
+    const response = (await callGateway({
+      method: "agent",
+      params: {
+        sessionKey: hiddenSessionKey,
+        message: params.triggerMessage,
+        deliver: false,
+        channel: INTERNAL_MESSAGE_CHANNEL,
+        idempotencyKey: crypto.randomUUID(),
+        label: "subagent-announce",
+        spawnedBy: requesterSessionKey,
+      },
+      timeoutMs: 10_000,
+    })) as { runId?: string };
+
+    const runId = typeof response?.runId === "string" && response.runId ? response.runId : "";
+    if (runId) {
+      const waitMs = Math.min(params.timeoutMs ?? 60_000, 60_000);
+      const wait = (await callGateway({
+        method: "agent.wait",
+        params: {
+          runId,
+          timeoutMs: waitMs,
+        },
+        timeoutMs: waitMs + 2000,
+      })) as { status?: string };
+      if (wait?.status !== "ok") return false;
+    }
+
+    const summary = (
+      await readLatestAssistantReply({
+        sessionKey: hiddenSessionKey,
+      })
+    )?.trim();
+    if (!summary || isSilentReplyText(summary, SILENT_REPLY_TOKEN)) {
+      return true;
+    }
+
+    const threadId =
+      origin?.threadId != null && origin.threadId !== "" ? String(origin.threadId) : undefined;
+    if (origin?.channel && origin.to && isDeliverableMessageChannel(origin.channel)) {
+      await callGateway({
+        method: "send",
+        params: {
+          to: origin.to,
+          message: summary,
+          channel: origin.channel,
+          accountId: origin.accountId,
+          sessionKey: requesterSessionKey,
+          threadId,
+          idempotencyKey: crypto.randomUUID(),
+        },
+        expectFinal: true,
+        timeoutMs: 60_000,
+      });
+      return true;
+    }
+
+    await callGateway({
+      method: "chat.inject",
+      params: {
+        sessionKey: requesterSessionKey,
+        message: summary,
+      },
+      timeoutMs: 10_000,
+    });
+    return true;
+  } finally {
+    try {
+      await callGateway({
+        method: "sessions.delete",
+        params: { key: hiddenSessionKey, deleteTranscript: true },
+        timeoutMs: 10_000,
+      });
+    } catch {
+      // ignore
+    }
+  }
+}
+
 async function sendAnnounce(item: AnnounceQueueItem) {
-  const origin = item.origin;
-  const threadId =
-    origin?.threadId != null && origin.threadId !== "" ? String(origin.threadId) : undefined;
-  await callGateway({
-    method: "agent",
-    params: {
-      sessionKey: item.sessionKey,
-      message: item.prompt,
-      channel: origin?.channel,
-      accountId: origin?.accountId,
-      to: origin?.to,
-      threadId,
-      deliver: true,
-      idempotencyKey: crypto.randomUUID(),
-    },
-    expectFinal: true,
-    timeoutMs: 60_000,
+  const handled = await deliverSubagentAnnouncement({
+    requesterSessionKey: item.sessionKey,
+    triggerMessage: item.prompt,
+    requesterOrigin: item.origin,
   });
+  if (!handled) {
+    throw new Error("subagent announce summarization did not complete");
+  }
 }
 
 function resolveRequesterStoreKey(
@@ -419,26 +509,12 @@ export async function runSubagentAnnounceFlow(params: {
       const { entry } = loadRequesterSessionEntry(params.requesterSessionKey);
       directOrigin = deliveryContextFromSession(entry);
     }
-    await callGateway({
-      method: "agent",
-      params: {
-        sessionKey: params.requesterSessionKey,
-        message: triggerMessage,
-        deliver: true,
-        channel: directOrigin?.channel,
-        accountId: directOrigin?.accountId,
-        to: directOrigin?.to,
-        threadId:
-          directOrigin?.threadId != null && directOrigin.threadId !== ""
-            ? String(directOrigin.threadId)
-            : undefined,
-        idempotencyKey: crypto.randomUUID(),
-      },
-      expectFinal: true,
+    didAnnounce = await deliverSubagentAnnouncement({
+      requesterSessionKey: params.requesterSessionKey,
+      triggerMessage,
+      requesterOrigin: directOrigin,
       timeoutMs: 60_000,
     });
-
-    didAnnounce = true;
   } catch (err) {
     defaultRuntime.error?.(`Subagent announce failed: ${String(err)}`);
     // Best-effort follow-ups; ignore failures to avoid breaking the caller response.

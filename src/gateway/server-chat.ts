@@ -3,6 +3,7 @@ import { loadConfig } from "../config/config.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
 import { loadSessionEntry } from "./session-utils.js";
+import { readSessionMessages } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
 
 /**
@@ -133,6 +134,43 @@ export function createAgentEventHandler({
   resolveSessionKeyForRun,
   clearAgentRunContext,
 }: AgentEventHandlerOptions) {
+  const resolveFinalAssistantMessage = (
+    runId: string,
+    sessionKey: string,
+    bufferedText: string,
+  ): string => {
+    const text = bufferedText.trim();
+    if (text) return text;
+    try {
+      const runContext = getAgentRunContext(runId);
+      const { storePath, entry } = loadSessionEntry(sessionKey);
+      const sessionId = runContext?.sessionId ?? entry?.sessionId;
+      const sessionFile = runContext?.sessionFile ?? entry?.sessionFile;
+      if (!sessionId) return "";
+      const messages = readSessionMessages(sessionId, storePath, sessionFile);
+      for (let idx = messages.length - 1; idx >= 0; idx -= 1) {
+        const message = messages[idx];
+        if (!message || typeof message !== "object") continue;
+        const role = (message as { role?: unknown }).role;
+        if (role !== "assistant") continue;
+        const content = (message as { content?: unknown }).content;
+        if (!Array.isArray(content)) continue;
+        const textPart = content.find(
+          (part) =>
+            part &&
+            typeof part === "object" &&
+            (part as { type?: unknown }).type === "text" &&
+            typeof (part as { text?: unknown }).text === "string",
+        ) as { text?: string } | undefined;
+        const latest = textPart?.text?.trim();
+        if (latest) return latest;
+      }
+    } catch {
+      // Best-effort transcript fallback only.
+    }
+    return "";
+  };
+
   const emitChatDelta = (sessionKey: string, clientRunId: string, seq: number, text: string) => {
     chatRunState.buffers.set(clientRunId, text);
     const now = Date.now();
@@ -164,7 +202,11 @@ export function createAgentEventHandler({
     jobState: "done" | "error",
     error?: unknown,
   ) => {
-    const text = chatRunState.buffers.get(clientRunId)?.trim() ?? "";
+    const text = resolveFinalAssistantMessage(
+      clientRunId,
+      sessionKey,
+      chatRunState.buffers.get(clientRunId) ?? "",
+    );
     chatRunState.buffers.delete(clientRunId);
     chatRunState.deltaSentAt.delete(clientRunId);
     if (jobState === "done") {

@@ -88,6 +88,8 @@ export async function runAgentTurnWithFallback(params: {
   if (params.sessionKey) {
     registerAgentRunContext(runId, {
       sessionKey: params.sessionKey,
+      sessionId: params.followupRun.run.sessionId,
+      sessionFile: params.followupRun.run.sessionFile,
       verboseLevel: params.resolvedVerboseLevel,
       isHeartbeat: params.isHeartbeat,
     });

@@ -75,6 +75,7 @@ import { prewarmSessionFile, trackSessionManagerAccess } from "../session-manage
 import { prepareSessionManagerForRun } from "../session-manager-init.js";
 import { buildEmbeddedSystemPrompt, createSystemPromptOverride } from "../system-prompt.js";
 import { splitSdkTools } from "../tool-split.js";
+import { wrapEmbeddedStreamFnWithOpenAIResponsesFallback } from "../openai-responses-fallback.js";
 import { toClientToolDefinitions } from "../../pi-tool-definition-adapter.js";
 import { buildSystemPromptParams } from "../../system-prompt-params.js";
 import { describeUnknownError, mapThinkingLevel } from "../utils.js";
@@ -485,8 +486,9 @@ export async function runEmbeddedAttempt(
         workspaceDir: params.workspaceDir,
       });
 
-      // Force a stable streamFn reference so vitest can reliably mock @mariozechner/pi-ai.
-      activeSession.agent.streamFn = streamSimple;
+      // GMN's OpenAI Responses stream occasionally returns malformed frames, so we
+      // synthesize a terminal stream from a non-streaming request for that provider.
+      activeSession.agent.streamFn = wrapEmbeddedStreamFnWithOpenAIResponsesFallback(streamSimple);
 
       applyExtraParamsToAgent(
         activeSession.agent,

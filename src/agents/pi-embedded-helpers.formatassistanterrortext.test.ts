@@ -47,4 +47,11 @@ describe("formatAssistantErrorText", () => {
     );
     expect(formatAssistantErrorText(msg)).toBe("LLM error server_error: Something exploded");
   });
+
+  it("returns a friendly message for stream parser failures", () => {
+    const msg = makeAssistantError(
+      "Bad control character in string literal in JSON at position 22213 (line 1 column 22214)",
+    );
+    expect(formatAssistantErrorText(msg)).toContain("response stream broke");
+  });
 });

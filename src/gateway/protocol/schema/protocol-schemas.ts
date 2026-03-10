@@ -24,6 +24,15 @@ import {
   SkillsUpdateParamsSchema,
 } from "./agents-models-skills.js";
 import {
+  PhoneCheckParamsSchema,
+  PhoneDiscoverParamsSchema,
+  PhoneListParamsSchema,
+  PhoneRunParamsSchema,
+  PhoneScreenParamsSchema,
+  PhoneStatusParamsSchema,
+  PhoneStopParamsSchema,
+} from "./phone.js";
+import {
   ChannelsLogoutParamsSchema,
   ChannelsStatusParamsSchema,
   ChannelsStatusResultSchema,
@@ -188,6 +197,13 @@ export const ProtocolSchemas: Record<string, TSchema> = {
   ModelChoice: ModelChoiceSchema,
   ModelsListParams: ModelsListParamsSchema,
   ModelsListResult: ModelsListResultSchema,
+  PhoneListParams: PhoneListParamsSchema,
+  PhoneDiscoverParams: PhoneDiscoverParamsSchema,
+  PhoneStatusParams: PhoneStatusParamsSchema,
+  PhoneCheckParams: PhoneCheckParamsSchema,
+  PhoneScreenParams: PhoneScreenParamsSchema,
+  PhoneRunParams: PhoneRunParamsSchema,
+  PhoneStopParams: PhoneStopParamsSchema,
   SkillsStatusParams: SkillsStatusParamsSchema,
   SkillsBinsParams: SkillsBinsParamsSchema,
   SkillsBinsResult: SkillsBinsResultSchema,

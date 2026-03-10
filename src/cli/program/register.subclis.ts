@@ -101,6 +101,14 @@ const entries: SubCliEntry[] = [
     },
   },
   {
+    name: "phone",
+    description: "Local phone runtime control",
+    register: async (program) => {
+      const mod = await import("../phone-cli.js");
+      mod.registerPhoneCli(program);
+    },
+  },
+  {
     name: "node",
     description: "Node control",
     register: async (program) => {

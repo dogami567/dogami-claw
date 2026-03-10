@@ -620,47 +620,32 @@ export const chatHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    // Resolve transcript path
-    const transcriptPath = entry?.sessionFile
-      ? entry.sessionFile
-      : path.join(path.dirname(storePath), `${sessionId}.jsonl`);
-
-    if (!fs.existsSync(transcriptPath)) {
+    const appended = appendAssistantTranscriptMessage({
+      message: p.message,
+      label: p.label,
+      sessionId,
+      storePath,
+      sessionFile: entry?.sessionFile,
+      createIfMissing: true,
+    });
+    if (!appended.ok) {
       respond(
         false,
         undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, "transcript file not found"),
+        errorShape(
+          ErrorCodes.UNAVAILABLE,
+          `failed to write transcript: ${appended.error ?? "unknown error"}`,
+        ),
       );
       return;
     }
-
-    // Build transcript entry
-    const now = Date.now();
-    const messageId = randomUUID().slice(0, 8);
-    const labelPrefix = p.label ? `[${p.label}]\n\n` : "";
-    const messageBody: Record<string, unknown> = {
-      role: "assistant",
-      content: [{ type: "text", text: `${labelPrefix}${p.message}` }],
-      timestamp: now,
-      stopReason: "injected",
-      usage: { input: 0, output: 0, totalTokens: 0 },
-    };
-    const transcriptEntry = {
-      type: "message",
-      id: messageId,
-      timestamp: new Date(now).toISOString(),
-      message: messageBody,
-    };
-
-    // Append to transcript file
-    try {
-      fs.appendFileSync(transcriptPath, `${JSON.stringify(transcriptEntry)}\n`, "utf-8");
-    } catch (err) {
-      const errMessage = err instanceof Error ? err.message : String(err);
+    const messageId = appended.messageId ?? randomUUID().slice(0, 8);
+    const messageBody = appended.message;
+    if (!messageBody) {
       respond(
         false,
         undefined,
-        errorShape(ErrorCodes.UNAVAILABLE, `failed to write transcript: ${errMessage}`),
+        errorShape(ErrorCodes.UNAVAILABLE, "failed to build injected message"),
       );
       return;
     }
@@ -671,7 +656,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       sessionKey: p.sessionKey,
       seq: 0,
       state: "final" as const,
-      message: transcriptEntry.message,
+      message: messageBody,
     };
     context.broadcast("chat", chatPayload);
     context.nodeSendToSession(p.sessionKey, "chat", chatPayload);

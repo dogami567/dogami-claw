@@ -22,6 +22,15 @@ import type {
   SkillsUpdateParamsSchema,
 } from "./agents-models-skills.js";
 import type {
+  PhoneCheckParamsSchema,
+  PhoneDiscoverParamsSchema,
+  PhoneListParamsSchema,
+  PhoneRunParamsSchema,
+  PhoneScreenParamsSchema,
+  PhoneStatusParamsSchema,
+  PhoneStopParamsSchema,
+} from "./phone.js";
+import type {
   ChannelsLogoutParamsSchema,
   ChannelsStatusParamsSchema,
   ChannelsStatusResultSchema,
@@ -177,6 +186,13 @@ export type AgentsListResult = Static<typeof AgentsListResultSchema>;
 export type ModelChoice = Static<typeof ModelChoiceSchema>;
 export type ModelsListParams = Static<typeof ModelsListParamsSchema>;
 export type ModelsListResult = Static<typeof ModelsListResultSchema>;
+export type PhoneListParams = Static<typeof PhoneListParamsSchema>;
+export type PhoneDiscoverParams = Static<typeof PhoneDiscoverParamsSchema>;
+export type PhoneStatusParams = Static<typeof PhoneStatusParamsSchema>;
+export type PhoneCheckParams = Static<typeof PhoneCheckParamsSchema>;
+export type PhoneScreenParams = Static<typeof PhoneScreenParamsSchema>;
+export type PhoneRunParams = Static<typeof PhoneRunParamsSchema>;
+export type PhoneStopParams = Static<typeof PhoneStopParamsSchema>;
 export type SkillsStatusParams = Static<typeof SkillsStatusParamsSchema>;
 export type SkillsBinsParams = Static<typeof SkillsBinsParamsSchema>;
 export type SkillsBinsResult = Static<typeof SkillsBinsResultSchema>;

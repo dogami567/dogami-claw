@@ -190,7 +190,7 @@ Docs: [WhatsApp](/channels/whatsapp), [Telegram](/channels/telegram), [Discord](
 ### Health check
 
 ```bash
-docker compose exec clawdbot-gateway node dist/index.js health --token "$CLAWDBOT_GATEWAY_TOKEN"
+docker compose exec clawdbot-gateway node dist/index.js health --json
 ```
 
 ### E2E smoke test (Docker)

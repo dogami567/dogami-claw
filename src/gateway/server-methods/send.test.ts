@@ -165,6 +165,33 @@ describe("gateway send mirroring", () => {
     );
   });
 
+  it("passes threadId through to outbound delivery", async () => {
+    mocks.deliverOutboundPayloads.mockResolvedValue([{ messageId: "m-thread", channel: "slack" }]);
+
+    const respond = vi.fn();
+    await sendHandlers.send({
+      params: {
+        to: "channel:C1",
+        message: "threaded hello",
+        channel: "slack",
+        threadId: "12345.6789",
+        idempotencyKey: "idem-thread",
+        sessionKey: "agent:main:main",
+      },
+      respond,
+      context: makeContext(),
+      req: { type: "req", id: "1", method: "send" },
+      client: null,
+      isWebchatConnect: () => false,
+    });
+
+    expect(mocks.deliverOutboundPayloads).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadId: "12345.6789",
+      }),
+    );
+  });
+
   it("derives a target session key when none is provided", async () => {
     mocks.deliverOutboundPayloads.mockResolvedValue([{ messageId: "m3", channel: "slack" }]);
 

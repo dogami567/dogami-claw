@@ -4,6 +4,7 @@ import { ApprovalsSchema } from "./zod-schema.approvals.js";
 import { AgentsSchema, AudioSchema, BindingsSchema, BroadcastSchema } from "./zod-schema.agents.js";
 import { HexColorSchema, ModelsConfigSchema } from "./zod-schema.core.js";
 import { HookMappingSchema, HooksGmailSchema, InternalHooksSchema } from "./zod-schema.hooks.js";
+import { PhonesSchema } from "./zod-schema.phones.js";
 import { ChannelsSchema } from "./zod-schema.providers.js";
 import { CommandsSchema, MessagesSchema, SessionSchema } from "./zod-schema.session.js";
 
@@ -446,6 +447,7 @@ export const ClawdbotSchema = z
       })
       .strict()
       .optional(),
+    phones: PhonesSchema,
     skills: z
       .object({
         allowBundled: z.array(z.string()).optional(),
@@ -532,24 +534,38 @@ export const ClawdbotSchema = z
   .strict()
   .superRefine((cfg, ctx) => {
     const agents = cfg.agents?.list ?? [];
-    if (agents.length === 0) return;
-    const agentIds = new Set(agents.map((agent) => agent.id));
-
-    const broadcast = cfg.broadcast;
-    if (!broadcast) return;
-
-    for (const [peerId, ids] of Object.entries(broadcast)) {
-      if (peerId === "strategy") continue;
-      if (!Array.isArray(ids)) continue;
-      for (let idx = 0; idx < ids.length; idx += 1) {
-        const agentId = ids[idx];
-        if (!agentIds.has(agentId)) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ["broadcast", peerId, idx],
-            message: `Unknown agent id "${agentId}" (not in agents.list).`,
-          });
+    if (agents.length > 0) {
+      const agentIds = new Set(agents.map((agent) => agent.id));
+      const broadcast = cfg.broadcast;
+      if (broadcast) {
+        for (const [peerId, ids] of Object.entries(broadcast)) {
+          if (peerId === "strategy") continue;
+          if (!Array.isArray(ids)) continue;
+          for (let idx = 0; idx < ids.length; idx += 1) {
+            const agentId = ids[idx];
+            if (!agentIds.has(agentId)) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["broadcast", peerId, idx],
+                message: `Unknown agent id "${agentId}" (not in agents.list).`,
+              });
+            }
+          }
         }
       }
+    }
+
+    const phoneAccounts = cfg.phones?.accounts;
+    const defaultPhoneAccountId = cfg.phones?.defaultAccountId?.trim();
+    if (
+      defaultPhoneAccountId &&
+      phoneAccounts &&
+      !Object.prototype.hasOwnProperty.call(phoneAccounts, defaultPhoneAccountId)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["phones", "defaultAccountId"],
+        message: `Unknown phone account id "${defaultPhoneAccountId}" (not in phones.accounts).`,
+      });
     }
   });

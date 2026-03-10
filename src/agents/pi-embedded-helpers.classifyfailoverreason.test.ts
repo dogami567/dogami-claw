@@ -25,6 +25,10 @@ describe("classifyFailoverReason", () => {
     expect(classifyFailoverReason("credit balance too low")).toBe("billing");
     expect(classifyFailoverReason("deadline exceeded")).toBe("timeout");
     expect(classifyFailoverReason("string should match pattern")).toBe("format");
+    expect(classifyFailoverReason("stream_read_error")).toBe("format");
+    expect(
+      classifyFailoverReason("Bad control character in string literal in JSON at position 12"),
+    ).toBe("format");
     expect(classifyFailoverReason("bad request")).toBeNull();
     expect(
       classifyFailoverReason(

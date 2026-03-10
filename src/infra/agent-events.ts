@@ -13,6 +13,8 @@ export type AgentEventPayload = {
 
 export type AgentRunContext = {
   sessionKey?: string;
+  sessionId?: string;
+  sessionFile?: string;
   verboseLevel?: VerboseLevel;
   isHeartbeat?: boolean;
 };
@@ -31,6 +33,12 @@ export function registerAgentRunContext(runId: string, context: AgentRunContext)
   }
   if (context.sessionKey && existing.sessionKey !== context.sessionKey) {
     existing.sessionKey = context.sessionKey;
+  }
+  if (context.sessionId && existing.sessionId !== context.sessionId) {
+    existing.sessionId = context.sessionId;
+  }
+  if (context.sessionFile && existing.sessionFile !== context.sessionFile) {
+    existing.sessionFile = context.sessionFile;
   }
   if (context.verboseLevel && existing.verboseLevel !== context.verboseLevel) {
     existing.verboseLevel = context.verboseLevel;
