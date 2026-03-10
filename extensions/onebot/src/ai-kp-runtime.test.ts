@@ -245,4 +245,190 @@ describe("maybeHandleOneBotAiKpRuntime", () => {
     expect(result).toBeNull();
     expect(sendText).not.toHaveBeenCalled();
   });
+
+  it("splits over-limit AI-KP replies into ordered segments", async () => {
+    const replyText = [
+      "??????",
+      "????????????????????????????",
+      "",
+      "??????",
+      "??????????????????????",
+      "",
+      "??????",
+      "?????????????????????????????",
+    ].join("
+")
+      .repeat(5);
+    const runtimeModulePath = await createRuntimeModule(`
+      module.exports = {
+        handleOneBotEnvelope() {
+          return {
+            ignored: false,
+            reason: null,
+            replyText: ${JSON.stringify(replyText)},
+            sendAction: { action: "send_group_msg", params: { group_id: "875336657", message: "ignored" } }
+          };
+        }
+      };
+    `);
+    const sendText = vi.fn(async ({ text }: { target: string; text: string }) => ({
+      messageId: String(text.length),
+    }));
+
+    const result = await maybeHandleOneBotAiKpRuntime({
+      cfg: {
+        ...buildConfig(runtimeModulePath),
+        channels: {
+          onebot: {
+            aiKp: {
+              runtimeModulePath,
+              storageRoot: "/tmp/aikp-runtime",
+            },
+            textChunkLimit: 120,
+            chunkMode: "newline",
+          },
+        },
+      } as ClawdbotConfig,
+      envelope: {
+        post_type: "message",
+        message_type: "group",
+        group_id: "875336657",
+        user_id: "281894872",
+        raw_message: "@?? ??",
+      },
+      wasMentioned: true,
+      isGroup: true,
+      sendText,
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      replyMode: "segments",
+    });
+    expect(result?.replySegments?.length).toBeGreaterThan(1);
+    expect(sendText).toHaveBeenCalledTimes(result?.replySegments?.length ?? 0);
+    expect((result?.replySegments ?? []).join("")).toBe(replyText);
+    expect(sendText.mock.calls.map(([call]) => call.text).join("")).toBe(replyText);
+  });
+
+  it("keeps short multi-paragraph AI-KP replies as a single send", async () => {
+    const replyText = [
+      "??????",
+      "???????",
+      "",
+      "?????",
+      "??????????????????",
+    ].join("
+");
+    const runtimeModulePath = await createRuntimeModule(`
+      module.exports = {
+        handleOneBotEnvelope() {
+          return {
+            ignored: false,
+            reason: null,
+            replyText: ${JSON.stringify(replyText)},
+            sendAction: { action: "send_group_msg", params: { group_id: "875336657", message: "ignored" } }
+          };
+        }
+      };
+    `);
+    const sendText = vi.fn(async () => ({ messageId: "1" }));
+
+    const result = await maybeHandleOneBotAiKpRuntime({
+      cfg: {
+        ...buildConfig(runtimeModulePath),
+        channels: {
+          onebot: {
+            aiKp: {
+              runtimeModulePath,
+              storageRoot: "/tmp/aikp-runtime",
+            },
+            textChunkLimit: 4000,
+            chunkMode: "newline",
+          },
+        },
+      } as ClawdbotConfig,
+      envelope: {
+        post_type: "message",
+        message_type: "group",
+        group_id: "875336657",
+        user_id: "281894872",
+        raw_message: "@?? ??",
+      },
+      wasMentioned: true,
+      isGroup: true,
+      sendText,
+    });
+
+    expect(result).toMatchObject({
+      handled: true,
+      replyMode: "single",
+      replySegments: [replyText],
+    });
+    expect(sendText).toHaveBeenCalledTimes(1);
+    expect(sendText).toHaveBeenCalledWith({
+      target: "group:875336657",
+      text: replyText,
+    });
+  });
+
+  it("reports the failed AI-KP segment before rethrowing send errors", async () => {
+    const replyText = `${"??????".repeat(12)}
+
+${"??????".repeat(12)}`;
+    const runtimeModulePath = await createRuntimeModule(`
+      module.exports = {
+        handleOneBotEnvelope() {
+          return {
+            ignored: false,
+            reason: null,
+            replyText: ${JSON.stringify(replyText)},
+            sendAction: { action: "send_group_msg", params: { group_id: "875336657", message: "ignored" } }
+          };
+        }
+      };
+    `);
+    const onError = vi.fn();
+    const sendText = vi
+      .fn<({ target, text }: { target: string; text: string }) => Promise<{ messageId?: string }>>()
+      .mockImplementationOnce(async () => ({ messageId: "first" }))
+      .mockImplementationOnce(async () => {
+        throw new Error("send failed");
+      });
+
+    await expect(
+      maybeHandleOneBotAiKpRuntime({
+        cfg: {
+          ...buildConfig(runtimeModulePath),
+          channels: {
+            onebot: {
+              aiKp: {
+                runtimeModulePath,
+                storageRoot: "/tmp/aikp-runtime",
+              },
+              textChunkLimit: 90,
+              chunkMode: "newline",
+            },
+          },
+        } as ClawdbotConfig,
+        envelope: {
+          post_type: "message",
+          message_type: "group",
+          group_id: "875336657",
+          user_id: "281894872",
+          raw_message: "@?? ??",
+        },
+        wasMentioned: true,
+        isGroup: true,
+        sendText,
+        onError,
+      }),
+    ).rejects.toThrow("send failed");
+
+    expect(sendText).toHaveBeenCalledTimes(2);
+    expect(onError).toHaveBeenCalledWith(
+      expect.stringContaining("failed sending reply segment 2/2 to group:875336657"),
+    );
+  });
+
 });
