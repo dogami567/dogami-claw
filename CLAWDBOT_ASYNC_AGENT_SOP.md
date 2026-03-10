@@ -486,6 +486,14 @@
 - 所有端都读写同一份 job / worker / phone registry
 - 同一台手机同一时刻只能有一个活跃 worker 持有控制权
 
+### 当前 phone 长任务的落地约定
+
+- `phone.run` 遇到明显长任务时，不再让主会话一直阻塞等待；优先尽快返回 `runId`
+- 这类任务会进入 **background tracked run**，后台继续盯到 runtime 的终态
+- 主 brain 查询进度时，优先读 `phone.status` / `phone.runs` 暴露的 tracked runs
+- `phone.stop` 在没显式传 `runId` 时，会优先命中该手机当前活跃 tracked run
+- 这样前台聊天、定时轮询、后续主 brain 查询就不会被一个 10 分钟手机任务卡死
+
 ### 推荐同步模型
 
 推荐把以下信息都做成 Gateway 侧的单一真源：

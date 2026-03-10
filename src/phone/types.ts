@@ -106,6 +106,7 @@ export type PhoneStatusResult = {
   devices: Record<string, unknown> | null;
   healthError?: string;
   devicesError?: string;
+  trackedRuns?: PhoneTrackedRunSummary[];
 };
 
 export type PhoneCheckResult = {
@@ -167,11 +168,13 @@ export type PhoneRunRequest = {
   includeScreenshot?: boolean;
 };
 
+export type PhoneRunStatus = "accepted" | "completed" | "failed" | "stopped";
+
 export type PhoneRunResult = {
   account: PhoneAccountSummary;
   runtime: PhoneRuntimeSummary;
   ok: boolean;
-  status: "accepted" | "completed" | "failed" | "stopped";
+  status: PhoneRunStatus;
   runId?: string;
   message?: string;
   completed: boolean;
@@ -180,6 +183,29 @@ export type PhoneRunResult = {
   screenshot?: PhoneScreenCapture;
   screenshotError?: string;
   raw: Record<string, unknown>;
+};
+
+export type PhoneTrackedRunSummary = {
+  runId: string;
+  accountId: string;
+  status: PhoneRunStatus;
+  completed: boolean;
+  mode?: PhoneMode;
+  task?: string;
+  goal?: string;
+  deviceId?: string;
+  deviceType?: string;
+  message?: string;
+  createdAt: number;
+  updatedAt: number;
+  startedAt?: number;
+  endedAt?: number;
+};
+
+export type PhoneRunsResult = {
+  accountId?: string;
+  activeCount: number;
+  runs: PhoneTrackedRunSummary[];
 };
 
 export type PhoneWaitRequest = {
@@ -201,6 +227,7 @@ export type PhoneStopResult = {
   runtime: PhoneRuntimeSummary;
   ok: boolean;
   stopped: boolean;
+  runId?: string;
   message?: string;
   raw: Record<string, unknown>;
 };

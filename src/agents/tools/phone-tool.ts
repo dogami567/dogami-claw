@@ -11,6 +11,7 @@ import type {
   PhoneScreenResult,
 } from "../../phone/types.js";
 import { optionalStringEnum, stringEnum } from "../schema/typebox.js";
+import { resolveAgentTimeoutMs } from "../timeout.js";
 import { sanitizeToolResultImages } from "../tool-images.js";
 import { type AnyAgentTool, jsonResult, readNumberParam, readStringParam } from "./common.js";
 
@@ -19,12 +20,18 @@ const PHONE_TOOL_ACTIONS = [
   "discover",
   "status",
   "check",
+  "runs",
   "screen",
   "run",
+  "wait",
   "stop",
 ] as const;
 const PHONE_TOOL_MODES = ["direct", "monitor"] as const;
 const MIN_PHONE_RUN_WAIT_TIMEOUT_MS = 60_000;
+const DEFAULT_PHONE_TOOL_WAIT_TIMEOUT_MS = 15_000;
+const MAX_PHONE_TOOL_WAIT_TIMEOUT_MS = 90_000;
+const PHONE_RUN_TIMEOUT_HEADROOM_MS = 30_000;
+const PHONE_BACKGROUND_DURATION_THRESHOLD_MS = 2 * 60_000;
 
 const PhoneToolSchema = Type.Object({
   action: stringEnum(PHONE_TOOL_ACTIONS),
@@ -126,6 +133,138 @@ function buildPhoneRunRequest(params: Record<string, unknown>): PhoneRunRequest 
   };
 }
 
+function parseChineseNumberToken(token: string): number | undefined {
+  if (!token) return undefined;
+  if (token === "半") return 0.5;
+  if (/^\d+(?:\.\d+)?$/.test(token)) return Number(token);
+  const digits: Record<string, number> = {
+    零: 0,
+    〇: 0,
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9,
+  };
+  let total = 0;
+  let current = 0;
+  for (const char of token) {
+    if (char === "十") {
+      total += (current || 1) * 10;
+      current = 0;
+      continue;
+    }
+    if (char === "百") {
+      total += (current || 1) * 100;
+      current = 0;
+      continue;
+    }
+    const digit = digits[char];
+    if (digit === undefined) return undefined;
+    current = digit;
+  }
+  return total + current;
+}
+
+function extractRequestedDurationMs(text?: string): number | undefined {
+  if (!text) return undefined;
+  const matches = text.matchAll(
+    /(\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百半]+)\s*(小时|分钟|分|秒钟|秒|hours?|hrs?|hr|minutes?|mins?|min|seconds?|secs?|sec|s)\b/gi,
+  );
+  let maxDurationMs: number | undefined;
+  for (const match of matches) {
+    const amount = parseChineseNumberToken(match[1]);
+    if (amount === undefined || amount <= 0) continue;
+    const unit = match[2].toLowerCase();
+    const unitMs =
+      unit.startsWith("小") || unit.startsWith("h")
+        ? 3_600_000
+        : unit.startsWith("秒") || unit.startsWith("s")
+          ? 1_000
+          : 60_000;
+    const durationMs = Math.round(amount * unitMs);
+    maxDurationMs =
+      typeof maxDurationMs === "number" ? Math.max(maxDurationMs, durationMs) : durationMs;
+  }
+  return maxDurationMs;
+}
+
+function shouldDetachPhoneRun(opts: { request: PhoneRunRequest; config?: ClawdbotConfig }) {
+  const { request, config } = opts;
+  const agentTimeoutMs = resolveAgentTimeoutMs({
+    cfg: config,
+    minMs: MIN_PHONE_RUN_WAIT_TIMEOUT_MS,
+  });
+  if (request.waitForCompletion !== true) {
+    return { detach: false, agentTimeoutMs };
+  }
+
+  if (
+    typeof request.waitTimeoutMs === "number" &&
+    request.waitTimeoutMs >=
+      Math.max(MIN_PHONE_RUN_WAIT_TIMEOUT_MS, agentTimeoutMs - PHONE_RUN_TIMEOUT_HEADROOM_MS)
+  ) {
+    return {
+      detach: true,
+      agentTimeoutMs,
+      reason: `requested wait (${request.waitTimeoutMs}ms) would outlive the current agent timeout (${agentTimeoutMs}ms)`,
+    };
+  }
+
+  const requestedDurationMs = Math.max(
+    extractRequestedDurationMs(request.goal) ?? 0,
+    extractRequestedDurationMs(request.task) ?? 0,
+  );
+  if (requestedDurationMs >= PHONE_BACKGROUND_DURATION_THRESHOLD_MS) {
+    return {
+      detach: true,
+      agentTimeoutMs,
+      reason: `goal duration looks long (${requestedDurationMs}ms)`,
+    };
+  }
+
+  const requestedSteps = Math.max(
+    request.maxSteps ?? 0,
+    request.maxRounds ?? 0,
+    request.executorMaxSteps ?? 0,
+  );
+  if (requestedSteps >= 120 && (request.mode === "monitor" || Boolean(request.goal))) {
+    return {
+      detach: true,
+      agentTimeoutMs,
+      reason: `monitor run requested ${requestedSteps} steps/rounds`,
+    };
+  }
+
+  return { detach: false, agentTimeoutMs };
+}
+
+function resolvePhoneToolWaitTimeoutMs(config: ClawdbotConfig | undefined, requestedMs?: number) {
+  const agentTimeoutMs = resolveAgentTimeoutMs({
+    cfg: config,
+    minMs: MIN_PHONE_RUN_WAIT_TIMEOUT_MS,
+  });
+  const safeMaxMs = Math.max(
+    DEFAULT_PHONE_TOOL_WAIT_TIMEOUT_MS,
+    Math.min(MAX_PHONE_TOOL_WAIT_TIMEOUT_MS, agentTimeoutMs - PHONE_RUN_TIMEOUT_HEADROOM_MS),
+  );
+  const baseMs =
+    typeof requestedMs === "number" && Number.isFinite(requestedMs)
+      ? Math.max(1_000, Math.floor(requestedMs))
+      : DEFAULT_PHONE_TOOL_WAIT_TIMEOUT_MS;
+  return Math.min(baseMs, safeMaxMs);
+}
+
+function isPhoneWaitTimeoutError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /phone runtime wait timed out after/i.test(message);
+}
+
 function isPhoneScreenCapture(value: unknown): value is PhoneScreenCapture {
   return Boolean(
     value &&
@@ -192,7 +331,7 @@ export function createPhoneTool(opts?: { config?: ClawdbotConfig }): AnyAgentToo
     label: "Phone",
     name: "phone",
     description:
-      "Use this for immediate phone control from natural-language requests such as '打开小红书', '去设置页面', '看看当前手机在什么界面', or '停止当前手机操作'. Use action=run for one-off phone actions, action=screen to inspect the current UI, and action=check/status when you need runtime health. Completion runs attach the post-action screen back to the model by default; set includeScreenshot=false only when you want to skip that image.",
+      "Use this for immediate phone control from natural-language requests such as '打开小红书', '去设置页面', '看看当前手机在什么界面', or '停止当前手机操作'. Use action=run for phone actions, action=screen to inspect the current UI, action=status/runs to inspect tracked phone work, and action=wait to briefly join an accepted background run. Long monitor goals are automatically detached into background tracking when waiting would exceed the current agent timeout. Completion runs attach the post-action screen back to the model by default; set includeScreenshot=false only when you want to skip that image.",
     parameters: PhoneToolSchema,
     execute: async (_toolCallId, args) => {
       const params = args as Record<string, unknown>;
@@ -208,6 +347,8 @@ export function createPhoneTool(opts?: { config?: ClawdbotConfig }): AnyAgentToo
           return jsonResult(await manager.status(readStringParam(params, "accountId")));
         case "check":
           return jsonResult(await manager.check(readStringParam(params, "accountId")));
+        case "runs":
+          return jsonResult(manager.runs(readStringParam(params, "accountId")));
         case "screen":
           return await buildPhoneToolResult(
             await manager.screen({
@@ -217,11 +358,61 @@ export function createPhoneTool(opts?: { config?: ClawdbotConfig }): AnyAgentToo
             }),
           );
         case "run": {
-          const result = await manager.run(buildPhoneRunRequest(params));
+          const requestedRun = buildPhoneRunRequest(params);
+          const detachDecision = shouldDetachPhoneRun({
+            request: requestedRun,
+            config: opts?.config,
+          });
+          const effectiveRun =
+            detachDecision.detach && requestedRun.waitForCompletion === true
+              ? { ...requestedRun, waitForCompletion: false }
+              : requestedRun;
+          const result = await manager.run(effectiveRun);
           if (result.completed && result.ok === false) {
             throw new Error(result.message ?? `phone.run failed with status=${result.status}`);
           }
-          return await buildPhoneToolResult(result);
+          const payload =
+            detachDecision.detach && !result.completed
+              ? {
+                  ...result,
+                  background: true,
+                  trackingHint:
+                    "Long phone job moved to background tracking. Use phone.runs, phone.status, phone.wait, or phone.stop with this runId.",
+                  trackingReason: detachDecision.reason,
+                  agentTimeoutMs: detachDecision.agentTimeoutMs,
+                }
+              : result;
+          return await buildPhoneToolResult(payload);
+        }
+        case "wait": {
+          const runId = readStringParam(params, "runId", { required: true });
+          const includeScreenshot =
+            typeof params.includeScreenshot === "boolean" ? params.includeScreenshot : true;
+          try {
+            return await buildPhoneToolResult(
+              await manager.wait({
+                accountId: readStringParam(params, "accountId"),
+                runId,
+                waitTimeoutMs: resolvePhoneToolWaitTimeoutMs(
+                  opts?.config,
+                  readNumberParam(params, "waitTimeoutMs", { integer: true }),
+                ),
+                deviceId: readStringParam(params, "deviceId"),
+                deviceType: readStringParam(params, "deviceType"),
+                includeScreenshot,
+              }),
+            );
+          } catch (error) {
+            if (!isPhoneWaitTimeoutError(error)) throw error;
+            return jsonResult({
+              ok: true,
+              status: "accepted",
+              completed: false,
+              runId,
+              message: `phone run ${runId} is still running`,
+              tracking: manager.getRun(runId),
+            });
+          }
         }
         case "stop":
           return jsonResult(

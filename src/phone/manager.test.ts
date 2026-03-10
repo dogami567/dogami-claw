@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 
 import type { ClawdbotConfig } from "../config/config.js";
-import { PhoneManager } from "./manager.js";
+import { PhoneManager, resetPhoneManagerForTests } from "./manager.js";
 import { clearAllCachedPhoneScreens } from "./screenshot-cache.js";
 
 const config: ClawdbotConfig = {
@@ -28,6 +28,7 @@ const config: ClawdbotConfig = {
 describe("PhoneManager", () => {
   afterEach(() => {
     clearAllCachedPhoneScreens();
+    resetPhoneManagerForTests();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -297,6 +298,142 @@ describe("PhoneManager", () => {
         mimeType: "image/png",
         bytes: 4,
       },
+    });
+  });
+
+  it("tracks accepted runs so status exposes them to the main agent", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === "http://127.0.0.1:8001/api/run") {
+          return new Response(JSON.stringify({ ok: true, run_id: "run-track" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url === "http://127.0.0.1:8001/api/health") {
+          return new Response(JSON.stringify({ ok: true }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url === "http://127.0.0.1:8001/api/devices") {
+          return new Response(JSON.stringify({ devices: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url === "http://127.0.0.1:8001/api/run/stream?run_id=run-track") {
+          return new Promise(() => {});
+        }
+        throw new Error(`unexpected fetch: ${url} ${init?.method ?? "GET"}`);
+      }),
+    );
+
+    const manager = new PhoneManager({
+      phones: {
+        defaultAccountId: "work",
+        accounts: {
+          work: {
+            name: "Work Phone",
+            deviceId: "55CQSWHYW4NJGAXW",
+            runtime: {
+              apiUrl: "http://127.0.0.1:8001/api",
+            },
+          },
+        },
+      },
+    });
+
+    const started = await manager.run({
+      accountId: "work",
+      goal: "刷十分钟小红书",
+      mode: "monitor",
+      waitForCompletion: false,
+    });
+    expect(started).toMatchObject({
+      runId: "run-track",
+      completed: false,
+      status: "accepted",
+    });
+
+    const status = await manager.status("work");
+    expect(status.trackedRuns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          runId: "run-track",
+          accountId: "work",
+          completed: false,
+          status: "accepted",
+        }),
+      ]),
+    );
+  });
+
+  it("uses the tracked active run when stop is called without an explicit runId", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === "http://127.0.0.1:8001/api/run") {
+          return new Response(JSON.stringify({ ok: true, run_id: "run-stop" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url === "http://127.0.0.1:8001/api/run/stop") {
+          expect(init?.method).toBe("POST");
+          const bodyText =
+            typeof init?.body === "string"
+              ? init.body
+              : init?.body instanceof URLSearchParams
+                ? init.body.toString()
+                : "";
+          expect(bodyText).toContain("run-stop");
+          return new Response(JSON.stringify({ ok: true, stopped: true, message: "stopped" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url === "http://127.0.0.1:8001/api/run/stream?run_id=run-stop") {
+          return new Promise(() => {});
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    const manager = new PhoneManager({
+      phones: {
+        defaultAccountId: "work",
+        accounts: {
+          work: {
+            name: "Work Phone",
+            deviceId: "55CQSWHYW4NJGAXW",
+            runtime: {
+              apiUrl: "http://127.0.0.1:8001/api",
+            },
+          },
+        },
+      },
+    });
+
+    await manager.run({
+      accountId: "work",
+      goal: "持续运营小红书",
+      mode: "monitor",
+      waitForCompletion: false,
+    });
+
+    const stopped = await manager.stop({ accountId: "work" });
+    expect(stopped).toMatchObject({
+      stopped: true,
+      runId: "run-stop",
+    });
+
+    const runs = manager.runs("work");
+    expect(runs.runs[0]).toMatchObject({
+      runId: "run-stop",
+      completed: true,
+      status: "stopped",
     });
   });
 

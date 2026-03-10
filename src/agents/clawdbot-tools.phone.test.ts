@@ -6,18 +6,24 @@ const {
   discoverMock,
   statusMock,
   checkMock,
+  runsMock,
   screenMock,
   runMock,
+  waitMock,
   stopMock,
+  getRunMock,
 } = vi.hoisted(() => ({
   createPhoneManagerMock: vi.fn(),
   listMock: vi.fn(),
   discoverMock: vi.fn(),
   statusMock: vi.fn(),
   checkMock: vi.fn(),
+  runsMock: vi.fn(),
   screenMock: vi.fn(),
   runMock: vi.fn(),
+  waitMock: vi.fn(),
   stopMock: vi.fn(),
+  getRunMock: vi.fn(),
 }));
 
 vi.mock("../phone/manager.js", () => ({
@@ -33,18 +39,24 @@ describe("phone tool", () => {
     discoverMock.mockReset();
     statusMock.mockReset();
     checkMock.mockReset();
+    runsMock.mockReset();
     screenMock.mockReset();
     runMock.mockReset();
+    waitMock.mockReset();
     stopMock.mockReset();
+    getRunMock.mockReset();
     createPhoneManagerMock.mockReset();
     createPhoneManagerMock.mockReturnValue({
       list: listMock,
       discover: discoverMock,
       status: statusMock,
       check: checkMock,
+      runs: runsMock,
       screen: screenMock,
       run: runMock,
+      wait: waitMock,
       stop: stopMock,
+      getRun: getRunMock,
     });
   });
 
@@ -227,6 +239,78 @@ describe("phone tool", () => {
         waitTimeoutMs: 60_000,
       }),
     );
+  });
+
+  it("auto-detaches long phone monitor runs before the agent timeout is hit", async () => {
+    runMock.mockResolvedValue({
+      ok: true,
+      status: "accepted",
+      completed: false,
+      runId: "run-long",
+      raw: { ok: true, run_id: "run-long" },
+    });
+
+    const tool = createClawdbotTools().find((candidate) => candidate.name === "phone");
+    expect(tool).toBeDefined();
+    if (!tool) throw new Error("missing phone tool");
+
+    const result = await tool.execute("call-long", {
+      action: "run",
+      accountId: "work",
+      goal: "那刷十分钟小红书吧，到处看看，评论一下，点下赞",
+      mode: "monitor",
+      waitForCompletion: true,
+      waitTimeoutMs: 720_000,
+      maxSteps: 220,
+      executorMaxSteps: 220,
+    });
+
+    expect(runMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        waitForCompletion: false,
+        waitTimeoutMs: 720_000,
+      }),
+    );
+    expect(result.details).toMatchObject({
+      runId: "run-long",
+      background: true,
+      completed: false,
+    });
+  });
+
+  it("returns a non-error polling response when phone.wait hits its short tool timeout", async () => {
+    waitMock.mockRejectedValue(new Error("phone runtime wait timed out after 15000ms"));
+    getRunMock.mockReturnValue({
+      runId: "run-poll",
+      accountId: "work",
+      status: "accepted",
+      completed: false,
+      createdAt: 1,
+      updatedAt: 2,
+    });
+
+    const tool = createClawdbotTools().find((candidate) => candidate.name === "phone");
+    expect(tool).toBeDefined();
+    if (!tool) throw new Error("missing phone tool");
+
+    const result = await tool.execute("call-wait", {
+      action: "wait",
+      accountId: "work",
+      runId: "run-poll",
+      waitTimeoutMs: 240_000,
+    });
+
+    expect(waitMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "run-poll",
+        waitTimeoutMs: 90_000,
+      }),
+    );
+    expect(result.details).toMatchObject({
+      runId: "run-poll",
+      completed: false,
+      status: "accepted",
+    });
   });
 
   it("attaches a screenshot to phone.run when includeScreenshot=true", async () => {
